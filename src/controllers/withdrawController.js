@@ -143,6 +143,27 @@ exports.getMyWithdraws = async (req, res) => {
   }
 };
 
+// User: check my own wagering (turnover) requirement status — how much more
+// betting is needed before a withdrawal will be allowed.
+exports.getTurnoverStatus = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const user = await User.findById(userId).select('wagering');
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const required = user.wagering?.required || 0;
+    const completed = user.wagering?.completed || 0;
+    res.json({
+      required,
+      completed,
+      remaining: Math.max(0, Math.round((required - completed) * 100) / 100),
+      canWithdraw: completed >= required
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 // Admin: Get all pending withdrawals
 exports.getPendingWithdraws = async (req, res) => {
   try {
