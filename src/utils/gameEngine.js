@@ -123,6 +123,13 @@ async function placeBet(userId, { game, duration, betType, betValue, betLane, un
   const netAmount = Math.round((amount - taxAmount) * 100) / 100;
 
   user.balance -= amount;
+
+  // ===== WAGERING PROGRESS — counts toward the deposit turnover requirement
+  // that gates withdrawals (see User.wagering + withdrawController). Every
+  // bet's full stake counts, win or lose. =====
+  if (!user.wagering) user.wagering = { required: 0, completed: 0 };
+  user.wagering.completed = (user.wagering.completed || 0) + amount;
+
   await user.save();
 
   const bet = await Bet.create({

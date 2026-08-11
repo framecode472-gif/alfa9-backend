@@ -102,6 +102,20 @@ const UserSchema = new mongoose.Schema({
     attendanceCollectedDays: [{ type: Number }],            // days collected in the CURRENT 7-day cycle
     lastAttendanceDate: { type: String, default: null }     // "YYYY-MM-DD" — a gap resets the streak
   },
+  // ===== WAGERING / TURNOVER REQUIREMENT (gates withdrawals) =====
+  // "Need to bet before you can withdraw" rule: every approved deposit adds
+  // its amount to `required` (1x rollover). Every bet a user places adds its
+  // stake to `completed`. A withdrawal is only allowed once
+  // completed >= required. Admin can override `required` directly from the
+  // admin panel (Users tab) to raise/lower/clear a specific user's
+  // requirement — e.g. to deliberately delay someone's withdrawal.
+  wagering: {
+    required: { type: Number, default: 0 },   // total turnover (Rs) needed before next withdrawal
+    completed: { type: Number, default: 0 },  // turnover done so far towards `required`
+    note: { type: String, default: null },    // optional admin note, e.g. why it was changed
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    updatedAt: { type: Date, default: null }
+  },
   // ===== SPIN WHEEL (Spin.jsx — daily deposit-tier spins, resets every day) =====
   spin: {
     dailyDepositTotal: { type: Number, default: 0 },  // today's cumulative approved deposits, resets daily

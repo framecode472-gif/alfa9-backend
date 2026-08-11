@@ -5,6 +5,7 @@ const { admin } = require('../middleware/admin');
 const {
   createWithdraw,
   getMyWithdraws,
+  getTurnoverStatus,
   getPendingWithdraws,
   approveWithdraw,
   rejectWithdraw
@@ -13,6 +14,7 @@ const {
 // User routes
 router.post('/create', auth, createWithdraw);
 router.get('/my-withdraws', auth, getMyWithdraws);
+router.get('/turnover-status', auth, getTurnoverStatus);
 
 // Admin routes
 router.get('/pending', auth, admin, getPendingWithdraws);

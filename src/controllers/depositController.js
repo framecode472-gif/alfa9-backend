@@ -162,6 +162,13 @@ exports.approveDeposit = async (req, res) => {
 
     const user = await User.findById(deposit.userId).session(session);
     user.balance += deposit.amount;
+
+    // ===== WAGERING REQUIREMENT — see adminController.approveDepositAdmin
+    // for the full explanation; kept in sync here since this is an
+    // alternate (legacy) approve path. =====
+    if (!user.wagering) user.wagering = { required: 0, completed: 0 };
+    user.wagering.required = (user.wagering.required || 0) + deposit.amount;
+
     await user.save({ session });
 
     // ===== PARTNER REWARD CANDIDATE (tiered, turnover-gated — see utils/partnerRewards.js) =====

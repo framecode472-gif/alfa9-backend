@@ -119,6 +119,77 @@ exports.getUserById = async (req, res) => {
     const withdrawals = await Withdraw.find({ userId }).sort({ createdAt: -1 });
 
     res.json({ user, transactions, deposits, withdrawals });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// ========== WAGERING / TURNOVER REQUIREMENT (withdrawal gate) ==========
+// GET /api/admin/users/:userId/wagering — quick status check
+exports.getWagering = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const user = await User.findById(userId).select('name email uid wagering');
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const required = user.wagering?.required || 0;
+    const completed = user.wagering?.completed || 0;
+    res.json({
+      userId: user._id,
+      name: user.name,
+      required,
+      completed,
+      remaining: Math.max(0, Math.round((required - completed) * 100) / 100),
+      canWithdraw: completed >= required,
+      note: user.wagering?.note || null,
+      updatedAt: user.wagering?.updatedAt || null
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// PUT /api/admin/users/:userId/wagering   body: { required, completed, note }
+// Admin override — set either/both values directly. Use this to:
+//  - delay a user's withdrawal: raise `required` above their `completed`
+//  - unlock a user immediately: set `required` to 0, or `completed` to match `required`
+//  - clear everything: set both to 0
+// Only fields provided in the body are changed.
+exports.updateWagering = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { required, completed, note } = req.body;
+    const adminId = req.user.id;
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    if (!user.wagering) user.wagering = { required: 0, completed: 0 };
+
+    if (required !== undefined) {
+      const n = Number(required);
+      if (Number.isNaN(n) || n < 0) return res.status(400).json({ message: 'required must be a non-negative number' });
+      user.wagering.required = n;
+    }
+    if (completed !== undefined) {
+      const n = Number(completed);
+      if (Number.isNaN(n) || n < 0) return res.status(400).json({ message: 'completed must be a non-negative number' });
+      user.wagering.completed = n;
+    }
+    if (note !== undefined) user.wagering.note = note;
+    user.wagering.updatedBy = adminId;
+    user.wagering.updatedAt = new Date();
+
+    await user.save();
+
+    res.json({
+      message: 'Wagering requirement updated',
+      wagering: {
+        required: user.wagering.required,
+        completed: user.wagering.completed,
+        remaining: Math.max(0, Math.round((user.wagering.required - user.wagering.completed) * 100) / 100),
+        note: user.wagering.note
+      }
+    });
 
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -214,6 +285,13 @@ exports.approveDepositAdmin = async (req, res) => {
     const user = await User.findById(deposit.userId).session(session);
     user.balance += totalCredit;
 
+    // ===== WAGERING REQUIREMENT — every approved deposit adds its amount
+    // (1x rollover) to what the user must bet before their next withdrawal
+    // is allowed. Stacks on top of any existing requirement. Admin can
+    // override this per-user from Users tab -> Wagering. =====
+    if (!user.wagering) user.wagering = { required: 0, completed: 0 };
+    user.wagering.required = (user.wagering.required || 0) + deposit.amount;
+
     // ===== SPIN WHEEL — grant today's spins per cumulative deposit tier =====
     const { grantSpinsForDeposit } = require('../utils/spinRewards');
     grantSpinsForDeposit(user, deposit.amount);
@@ -308,7 +386,7 @@ exports.getAllWithdrawals = async (req, res) => {
     if (status) query.status = status;
 
     const withdrawals = await Withdraw.find(query)
-      .populate('userId', 'name email phone balance')
+      .populate('userId', 'name email phone balance wagering')
       .sort({ createdAt: -1 })
       .limit(parseInt(limit))
       .skip((parseInt(page) - 1) * parseInt(limit));

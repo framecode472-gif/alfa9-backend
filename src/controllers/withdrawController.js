@@ -41,8 +41,26 @@ exports.createWithdraw = async (req, res) => {
       throw new Error('Insufficient balance');
     }
 
+    // ===== WAGERING REQUIREMENT GATE =====
+    // User must have bet (turnover) at least as much as their approved
+    // deposits before they're allowed to withdraw. Admin can override
+    // `wagering.required` per-user from the admin panel to raise, lower,
+    // or clear this (e.g. to deliberately delay a specific user).
+    const wagerRequired = user.wagering?.required || 0;
+    const wagerCompleted = user.wagering?.completed || 0;
+    const wagerRemaining = Math.round((wagerRequired - wagerCompleted) * 100) / 100;
+    if (wagerRemaining > 0) {
+      throw new Error(`Withdraw karne se pehle aapko Rs${wagerRemaining} ki betting mukammal karni hogi (Rs${wagerCompleted} / Rs${wagerRequired} mukammal).`);
+    }
+
     // Deduct balance
     user.balance -= amount;
+
+    // Requirement cleared for this cycle — reset so the next deposit starts
+    // a fresh requirement rather than carrying over old completed turnover.
+    user.wagering.required = 0;
+    user.wagering.completed = 0;
+
     await user.save({ session });
 
     // Create withdrawal request
