@@ -285,12 +285,14 @@ exports.approveDepositAdmin = async (req, res) => {
     const user = await User.findById(deposit.userId).session(session);
     user.balance += totalCredit;
 
-    // ===== WAGERING REQUIREMENT — every approved deposit adds its amount
-    // (1x rollover) to what the user must bet before their next withdrawal
-    // is allowed. Stacks on top of any existing requirement. Admin can
-    // override this per-user from Users tab -> Wagering. =====
+    // ===== WAGERING REQUIREMENT — every approved deposit adds the FULL
+    // amount credited — deposit + bonus — to what the user must bet before
+    // their next withdrawal is allowed (bonus money is real balance too, so
+    // it must be wagered the same as the deposit itself). Stacks on top of
+    // any existing requirement. Admin can override this per-user from
+    // Users tab -> Wagering. =====
     if (!user.wagering) user.wagering = { required: 0, completed: 0 };
-    user.wagering.required = (user.wagering.required || 0) + deposit.amount;
+    user.wagering.required = (user.wagering.required || 0) + totalCredit;
 
     // ===== SPIN WHEEL — grant today's spins per cumulative deposit tier =====
     const { grantSpinsForDeposit } = require('../utils/spinRewards');
@@ -726,6 +728,15 @@ exports.givePointsToUser = async (req, res) => {
       const before = user.balance;
       user.balance = adjustMode === 'set' ? Math.max(0, numAmount) : Math.max(0, before + numAmount);
       delta = user.balance - before;
+
+      // ===== WAGERING REQUIREMENT — any balance the admin manually credits
+      // (bonus, compensation, etc.) also has to be bet through before the
+      // user can withdraw, same rule as a deposit. Only rises on a credit
+      // (delta > 0) — a deduction never lowers what's already required. =====
+      if (delta > 0) {
+        if (!user.wagering) user.wagering = { required: 0, completed: 0 };
+        user.wagering.required = (user.wagering.required || 0) + delta;
+      }
     }
     await user.save();
 

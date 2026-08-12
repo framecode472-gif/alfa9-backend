@@ -21,6 +21,12 @@ exports.createGift = async (req, res) => {
     }
 
     user.balance += amount;
+
+    // ===== WAGERING REQUIREMENT — gift money is real balance too, so it
+    // must be wagered the same as a deposit before it can be withdrawn. =====
+    if (!user.wagering) user.wagering = { required: 0, completed: 0 };
+    user.wagering.required = (user.wagering.required || 0) + Number(amount);
+
     await user.save({ session });
 
     // Create gift record
@@ -99,6 +105,12 @@ exports.redeemGiftCode = async (req, res) => {
 
     const user = await User.findById(req.user.id).session(session);
     user.balance += gift.amount;
+
+    // ===== WAGERING REQUIREMENT — same rule as above: redeemed gift-code
+    // money must be wagered before it can be withdrawn. =====
+    if (!user.wagering) user.wagering = { required: 0, completed: 0 };
+    user.wagering.required = (user.wagering.required || 0) + gift.amount;
+
     await user.save({ session });
 
     gift.claimed = true;

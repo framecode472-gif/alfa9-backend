@@ -5,6 +5,11 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const { notifyAdmin } = require('./notificationController');
 const { generateOrderNumber } = require('../utils/orderNumber');
+const { getStartOfTodayPKT, msUntilNextResetPKT } = require('../utils/pktTime');
+
+// Max withdrawal requests allowed per payment method per calendar day
+// (resets at midnight Pakistan time — see utils/pktTime.js).
+const DAILY_WITHDRAWALS_PER_METHOD = 3;
 
 // User: Create withdrawal request (WITH TRANSACTION SAVE)
 exports.createWithdraw = async (req, res) => {
@@ -51,6 +56,23 @@ exports.createWithdraw = async (req, res) => {
     const wagerRemaining = Math.round((wagerRequired - wagerCompleted) * 100) / 100;
     if (wagerRemaining > 0) {
       throw new Error(`Withdraw karne se pehle aapko Rs${wagerRemaining} ki betting mukammal karni hogi (Rs${wagerCompleted} / Rs${wagerRequired} mukammal).`);
+    }
+
+    // ===== DAILY WITHDRAWAL LIMIT (per payment method) =====
+    // Max 3 requests per method (easypaisa / jazzcash / etc.) per calendar
+    // day. Resets automatically at midnight Pakistan time — this is a live
+    // count of today's requests, not a stored counter, so it can never get
+    // stuck. Rejected requests don't count against the limit.
+    const startOfToday = getStartOfTodayPKT();
+    const todayCountForMethod = await Withdraw.countDocuments({
+      userId,
+      method,
+      status: { $ne: 'rejected' },
+      createdAt: { $gte: startOfToday }
+    }).session(session);
+    if (todayCountForMethod >= DAILY_WITHDRAWALS_PER_METHOD) {
+      const hoursLeft = Math.ceil(msUntilNextResetPKT() / (60 * 60 * 1000));
+      throw new Error(`Aaj ${method} se already ${DAILY_WITHDRAWALS_PER_METHOD} withdrawal requests ho chuki hain. Limit raat 12 baje (PKT) reset hogi — taqreeban ${hoursLeft} ghante baad.`);
     }
 
     // Deduct balance
@@ -153,11 +175,34 @@ exports.getTurnoverStatus = async (req, res) => {
 
     const required = user.wagering?.required || 0;
     const completed = user.wagering?.completed || 0;
+
+    // ===== DAILY WITHDRAWAL LIMIT STATUS (per method) — lets the frontend
+    // show a real, live "X withdrawals left today" instead of a hardcoded
+    // number, and disable/reset it automatically at midnight PKT. =====
+    const startOfToday = getStartOfTodayPKT();
+    const methods = ['easypaisa', 'jazzcash'];
+    const dailyLimits = {};
+    for (const method of methods) {
+      const used = await Withdraw.countDocuments({
+        userId,
+        method,
+        status: { $ne: 'rejected' },
+        createdAt: { $gte: startOfToday }
+      });
+      dailyLimits[method] = {
+        used,
+        max: DAILY_WITHDRAWALS_PER_METHOD,
+        remaining: Math.max(0, DAILY_WITHDRAWALS_PER_METHOD - used)
+      };
+    }
+
     res.json({
       required,
       completed,
       remaining: Math.max(0, Math.round((required - completed) * 100) / 100),
-      canWithdraw: completed >= required
+      canWithdraw: completed >= required,
+      dailyLimits,
+      resetsInMs: msUntilNextResetPKT()
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
