@@ -2,6 +2,8 @@ const Deposit = require('../models/Deposit');
 const User = require('../models/User');
 const Transaction = require('../models/Transaction');
 const mongoose = require('mongoose');
+const crypto = require('crypto');
+const fs = require('fs');
 const { notifyAdmin } = require('./notificationController');
 const { generateOrderNumber } = require('../utils/orderNumber');
 
@@ -16,6 +18,31 @@ exports.createDeposit = async (req, res) => {
       return res.status(400).json({ message: 'Payment screenshot is required' });
     }
 
+    // ===== DUPLICATE SCREENSHOT DETECTION =====
+    // Hash the actual image bytes (SHA-256). If this exact image was ever
+    // used in a prior deposit — by this user or ANY user — that's the
+    // classic "reuse the same receipt screenshot" fraud pattern. We don't
+    // block the submission outright (a false positive would wrongly stop a
+    // genuine deposit), but we flag it clearly so admin sees it immediately
+    // instead of having to eyeball every screenshot for reuse.
+    const fileBuffer = fs.readFileSync(req.file.path);
+    const screenshotHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+
+    const priorMatch = await Deposit.findOne({
+      screenshotHash,
+      status: { $ne: 'rejected' }
+    }).populate('userId', 'name uid');
+
+    let flagged = false;
+    let flagReason;
+    if (priorMatch) {
+      flagged = true;
+      const sameUser = priorMatch.userId?._id?.toString() === userId;
+      flagReason = sameUser
+        ? `This exact screenshot was already used in a previous deposit (${priorMatch.orderNumber || priorMatch._id}) by this same user.`
+        : `This exact screenshot was already used in a deposit (${priorMatch.orderNumber || priorMatch._id}) by a different member (${priorMatch.userId?.name || 'unknown'}, UID ${priorMatch.userId?.uid || 'N/A'}).`;
+    }
+
     // Internal reference id (user's own bank/wallet reference isn't collected
     // by the UI, so we generate one — used only to satisfy the unique index)
     const transactionId = `TXN${Date.now()}${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
@@ -27,7 +54,10 @@ exports.createDeposit = async (req, res) => {
       method,
       transactionId,
       orderNumber,
-      screenshot: `/uploads/screenshots/${req.file.filename}`
+      screenshot: `/uploads/screenshots/${req.file.filename}`,
+      screenshotHash,
+      flagged,
+      flagReason
     });
 
     await deposit.save();
@@ -36,8 +66,10 @@ exports.createDeposit = async (req, res) => {
     await notifyAdmin(
       req.io,
       'deposit',
-      `${user?.name || 'A member'} submitted a deposit request of Rs${amount} via ${method}`,
-      'New Deposit Request'
+      flagged
+        ? `⚠️ FLAGGED: ${user?.name || 'A member'} submitted a Rs${amount} deposit with a DUPLICATE screenshot via ${method}`
+        : `${user?.name || 'A member'} submitted a deposit request of Rs${amount} via ${method}`,
+      flagged ? 'Flagged Deposit — Duplicate Screenshot' : 'New Deposit Request'
     );
 
     res.status(201).json({

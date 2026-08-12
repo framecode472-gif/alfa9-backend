@@ -31,6 +31,21 @@ const DepositSchema = new mongoose.Schema({
   screenshot: { 
     type: String
   },
+  // SHA-256 hash of the uploaded screenshot image — lets us catch the
+  // classic fraud pattern of reusing the same payment receipt image across
+  // multiple deposit claims (same user or different users), without needing
+  // any real bank/wallet API integration.
+  screenshotHash: {
+    type: String,
+    index: true
+  },
+  flagged: {
+    type: Boolean,
+    default: false
+  },
+  flagReason: {
+    type: String
+  },
   status: { 
     type: String, 
     enum: ['pending', 'approved', 'rejected'], 

@@ -258,14 +258,13 @@ exports.getAllDeposits = async (req, res) => {
   }
 };
 
-exports.approveDepositAdmin = async (req, res) => {
+// Shared core logic — approves one deposit, credits balance + bonus, updates
+// wagering. Used by both the single-deposit endpoint and bulk-approve.
+// Throws on any failure (caller decides how to report it).
+async function approveOneDeposit(depositId, adminId, io) {
   const session = await mongoose.startSession();
   session.startTransaction();
-
   try {
-    const { depositId } = req.params;
-    const adminId = req.user.id;
-
     const deposit = await Deposit.findById(depositId).session(session);
     if (!deposit) throw new Error('Deposit not found');
     if (deposit.status !== 'pending') throw new Error('Deposit already processed');
@@ -331,23 +330,68 @@ exports.approveDepositAdmin = async (req, res) => {
     const notifMessage = bonusAmount > 0
       ? `Your Rs${deposit.amount} deposit was approved. Rs${bonusAmount} bonus added — Rs${totalCredit} credited to your balance.`
       : `Your Rs${deposit.amount} deposit was approved and credited to your balance.`;
-    await notifyUser(req.io, deposit.userId, 'deposit', notifMessage, 'Deposit Approved');
+    await notifyUser(io, deposit.userId, 'deposit', notifMessage, 'Deposit Approved');
 
-    res.json({
-      message: 'Deposit approved',
-      deposit,
-      bonusAmount,
-      totalCredit,
-      newBalance: user.balance
-    });
-
+    return { deposit, bonusAmount, totalCredit, newBalance: user.balance };
   } catch (error) {
     await session.abortTransaction();
-    res.status(500).json({ error: error.message });
+    throw error;
   } finally {
     session.endSession();
   }
+}
+
+exports.approveDepositAdmin = async (req, res) => {
+  try {
+    const { depositId } = req.params;
+    const adminId = req.user.id;
+    const result = await approveOneDeposit(depositId, adminId, req.io);
+    res.json({ message: 'Deposit approved', ...result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 };
+
+// POST /api/admin/deposits/bulk-approve   body: { depositIds: [...] }
+// Speeds up review of the "safe" pile: approves every listed deposit that
+// is still pending AND not flagged as a duplicate-screenshot. Any flagged
+// or already-processed deposit in the list is skipped and reported back —
+// never silently approved, since those genuinely need a human look.
+exports.bulkApproveDeposits = async (req, res) => {
+  try {
+    const { depositIds } = req.body;
+    const adminId = req.user.id;
+    if (!Array.isArray(depositIds) || depositIds.length === 0) {
+      return res.status(400).json({ message: 'depositIds must be a non-empty array' });
+    }
+
+    const approved = [];
+    const skipped = [];
+
+    for (const depositId of depositIds) {
+      try {
+        const deposit = await Deposit.findById(depositId);
+        if (!deposit) { skipped.push({ depositId, reason: 'Not found' }); continue; }
+        if (deposit.status !== 'pending') { skipped.push({ depositId, reason: 'Already processed' }); continue; }
+        if (deposit.flagged) { skipped.push({ depositId, reason: 'Flagged — needs manual review' }); continue; }
+
+        const result = await approveOneDeposit(depositId, adminId, req.io);
+        approved.push({ depositId, totalCredit: result.totalCredit });
+      } catch (err) {
+        skipped.push({ depositId, reason: err.message });
+      }
+    }
+
+    res.json({
+      message: `Approved ${approved.length} of ${depositIds.length} deposits`,
+      approved,
+      skipped
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 
 exports.rejectDepositAdmin = async (req, res) => {
   try {
