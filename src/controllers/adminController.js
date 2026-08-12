@@ -241,7 +241,7 @@ exports.getAllDeposits = async (req, res) => {
     if (status) query.status = status;
 
     const deposits = await Deposit.find(query)
-      .populate('userId', 'name email phone')
+      .populate('userId', 'name email phone uid')
       .sort({ createdAt: -1 })
       .limit(parseInt(limit))
       .skip((parseInt(page) - 1) * parseInt(limit));
@@ -386,7 +386,7 @@ exports.getAllWithdrawals = async (req, res) => {
     if (status) query.status = status;
 
     const withdrawals = await Withdraw.find(query)
-      .populate('userId', 'name email phone balance wagering')
+      .populate('userId', 'name email phone balance wagering uid')
       .sort({ createdAt: -1 })
       .limit(parseInt(limit))
       .skip((parseInt(page) - 1) * parseInt(limit));
