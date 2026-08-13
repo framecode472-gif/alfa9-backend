@@ -87,7 +87,9 @@ app.use('/api/transaction', transactionRoutes);
 app.use('/api/user', userRoutes); // was imported but never mounted — fixed
 
 // Phase 1 — Game Engine
+const boomRoutes = require('./src/routes/boomRoutes');
 app.use('/api/game-round', gameRoundRoutes);
+app.use('/api/boom', boomRoutes);
 
 // Phase 3/4 — pending features (stub controllers, all return 501 for now)
 app.use('/api/activity', activityRoutes);

@@ -10,7 +10,7 @@ const GameSetting = require('../models/GameSetting');
  * Run once with: node src/utils/seedGameSettings.js
  */
 async function seedGameSettings() {
-  for (const gameName of ['wingo', 'k3', '5d']) {
+  for (const gameName of ['wingo', 'k3', '5d', 'boom']) {
     await GameSetting.findOneAndUpdate(
       { gameName },
       { gameName },

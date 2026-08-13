@@ -14,7 +14,7 @@ const TransactionSchema = new mongoose.Schema({
   category: { type: String, default: null }, // for type='bonus': matches Activity/BonusDetails.jsx CATEGORIES list
   gameName: { 
     type: String, 
-    enum: ['wingo', 'k3', '5d'], 
+    enum: ['wingo', 'k3', '5d', 'boom'], 
     // sirf game type ke liye required
   },
   betAmount: { 

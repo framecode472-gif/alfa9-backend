@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const GameSettingSchema = new mongoose.Schema({
   gameName: { 
     type: String, 
-    enum: ['wingo', 'k3', '5d'], 
+    enum: ['wingo', 'k3', '5d', 'boom'], 
     unique: true, 
     required: true 
   },
