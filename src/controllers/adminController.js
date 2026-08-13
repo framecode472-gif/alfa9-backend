@@ -549,8 +549,14 @@ exports.updateGameSettings = async (req, res) => {
     const { gameName } = req.params;
     const { profitPercentage, lossPercentage, minBet, maxBet, isActive, maintenance } = req.body;
 
-    const setting = await GameSetting.findOne({ gameName });
-    if (!setting) return res.status(404).json({ message: 'Game setting not found' });
+    // Upsert instead of 404 — guarantees the admin panel's game controls
+    // (win rate, maintenance, bet limits) always work for any valid game,
+    // even if seedGameSettings.js was never run for it.
+    const setting = await GameSetting.findOneAndUpdate(
+      { gameName },
+      { gameName },
+      { upsert: true, setDefaultsOnInsert: true, new: true }
+    );
 
     if (profitPercentage !== undefined) setting.profitPercentage = profitPercentage;
     if (lossPercentage !== undefined) setting.lossPercentage = lossPercentage;

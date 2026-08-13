@@ -6,13 +6,17 @@ const mongoose = require('mongoose');
  */
 const BetSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  roundId: { type: mongoose.Schema.Types.ObjectId, ref: 'GameRound', required: true },
+  // Only set for round-based games (WinGo/K3/5D). Boom Mines settles instantly
+  // per-round with no shared GameRound doc, so this stays unset for it.
+  roundId: { type: mongoose.Schema.Types.ObjectId, ref: 'GameRound', required: false },
 
-  gameName: { type: String, enum: ['wingo', 'k3', '5d'], required: true },
-  duration: { type: String, enum: ['30s', '1m', '3m', '5m'], required: true },
-  period: { type: String, required: true },
+  gameName: { type: String, enum: ['wingo', 'k3', '5d', 'boom'], required: true },
+  // Only set for round-based games. Boom Mines has no fixed duration/period.
+  duration: { type: String, enum: ['30s', '1m', '3m', '5m'], required: false },
+  period: { type: String, required: false },
 
-  // Betting rebate category (Activity/BettingRebate.jsx) — all current games are 'lottery'.
+  // Betting rebate category (Activity/BettingRebate.jsx) — wingo/k3/5d are
+  // 'lottery', Boom Mines is 'casino'.
   category: { type: String, enum: ['lottery', 'casino', 'rummy', 'slots'], default: 'lottery' },
 
   // What was bet:

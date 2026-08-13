@@ -2,7 +2,9 @@ const BoomRound = require('../models/BoomRound');
 const GameSetting = require('../models/GameSetting');
 const User = require('../models/User');
 const Transaction = require('../models/Transaction');
+const Bet = require('../models/Bet');
 const { addVipExp } = require('./vipExp');
+const { calculateBetRebate } = require('./activityRewards');
 
 const GRID_SIZE = 25;
 const HOUSE_FACTOR = 0.97; // same 3% built into the odds curve as the frontend's calcMultiplier
@@ -14,6 +16,42 @@ function generateOrderNumber() {
   const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1, 2)}${pad(now.getDate(), 2)}${pad(now.getHours(), 2)}${pad(now.getMinutes(), 2)}${pad(now.getSeconds(), 2)}`;
   const rand = Math.floor(Math.random() * 1e9);
   return `BM${stamp}${pad(rand, 9)}`;
+}
+
+/**
+ * Records a settled Boom round into the shared Bet collection under
+ * category: 'casino' — this is what makes it show up on the Casino tab
+ * of Activity > Betting Rebate (and count in game-stats), the same way
+ * WinGo/K3/5D bets do under 'lottery' (see gameEngine.placeBet +
+ * settleRound -> calculateBetRebate). Without this, Boom rounds never
+ * touched the Bet collection at all, so no rebate was ever generated
+ * for it under ANY category.
+ *
+ * Boom settles instantly per round (no separate "place" then "settle"
+ * step like the round-based games), so this creates the Bet already
+ * in its final settled state in one shot.
+ */
+async function recordCasinoBet(round, { won, payout, multiplier }) {
+  const bet = new Bet({
+    userId: round.userId,
+    gameName: 'boom',
+    category: 'casino',
+    betType: 'mines',
+    betValue: `${round.minesCount} mines`,
+    unitAmount: round.betAmount,
+    quantity: 1,
+    multiplier: 1,
+    amount: round.betAmount,
+    taxAmount: 0,
+    netAmount: round.betAmount,
+    orderNumber: round.orderNumber,
+    status: won ? 'won' : 'lost',
+    oddsMultiplier: multiplier || 0,
+    payout: payout || 0,
+    settledAt: round.settledAt || new Date(),
+  });
+  calculateBetRebate(bet); // sets bet.rebateAmount from REBATE_RATES.casino
+  await bet.save();
 }
 
 /**
@@ -126,6 +164,8 @@ async function revealTile(userId, roundId, tileIndex) {
       description: `Boom loss — round ${round.orderNumber}`
     });
 
+    await recordCasinoBet(round, { won: false, payout: 0, multiplier: 0 });
+
     return { busted: true, tileIndex: idx, balance: user.balance, multiplier: 0 };
   }
 
@@ -163,6 +203,8 @@ async function settleCashOut(round, multiplier) {
     description: `Boom win — round ${round.orderNumber} (${multiplier.toFixed(2)}x)`
   });
 
+  await recordCasinoBet(round, { won: true, payout, multiplier });
+
   return { balance: user.balance, payout };
 }
 
@@ -190,6 +232,8 @@ async function giveUp(userId, roundId) {
     result: 'loss', status: 'completed', balanceAfter: (await User.findById(userId)).balance,
     description: `Boom forfeited — round ${round.orderNumber}`
   });
+
+  await recordCasinoBet(round, { won: false, payout: 0, multiplier: 0 });
 
   return { ok: true };
 }
