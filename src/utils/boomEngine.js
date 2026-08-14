@@ -55,6 +55,35 @@ async function recordCasinoBet(round, { won, payout, multiplier }) {
 }
 
 /**
+ * Builds a decorative full-board layout ('mine'/'safe' for all 25 tiles)
+ * to show once a round has ended — so the player sees the WHOLE board,
+ * not just the one tile they hit, the same way the real Mines game
+ * reveals everything on bust/cashout. Tiles the player actually touched
+ * keep their real, already-known outcome; every other still-hidden tile
+ * gets a fair random mine/safe assignment (respecting minesCount) purely
+ * for this end-of-round reveal — it never affects gameplay, since the
+ * round is already settled by the time this runs.
+ */
+function buildFullReveal(round, hitBombIdx) {
+  const knownMines = new Set();
+  if (hitBombIdx !== null && hitBombIdx !== undefined) knownMines.add(hitBombIdx);
+  const knownSafe = new Set(round.revealedTiles);
+
+  const remaining = [];
+  for (let i = 0; i < GRID_SIZE; i++) {
+    if (!knownMines.has(i) && !knownSafe.has(i)) remaining.push(i);
+  }
+  for (let i = remaining.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [remaining[i], remaining[j]] = [remaining[j], remaining[i]];
+  }
+  const stillNeeded = Math.max(0, round.minesCount - knownMines.size);
+  remaining.slice(0, stillNeeded).forEach((i) => knownMines.add(i));
+
+  return Array.from({ length: GRID_SIZE }, (_, i) => (knownMines.has(i) ? 'mine' : 'safe'));
+}
+
+/**
  * Same curve as the frontend's calcMultiplier() — kept identical so the
  * number the client shows mid-round always matches what the server will
  * actually pay out on cashout.
@@ -165,7 +194,7 @@ async function revealTile(userId, roundId, tileIndex) {
 
     await recordCasinoBet(round, { won: false, payout: 0, multiplier: 0 });
 
-    return { busted: true, tileIndex: idx, balance: user.balance, multiplier: 0 };
+    return { busted: true, tileIndex: idx, balance: user.balance, multiplier: 0, fullReveal: buildFullReveal(round, idx) };
   }
 
   round.revealedTiles.push(idx);
@@ -175,7 +204,7 @@ async function revealTile(userId, roundId, tileIndex) {
   if (allSafeCleared) {
     // Board fully cleared — auto cash-out, same as the real Mines game.
     const result = await settleCashOut(round, multiplier);
-    return { busted: false, tileIndex: idx, multiplier, balance: result.balance, autoWin: true, payout: result.payout };
+    return { busted: false, tileIndex: idx, multiplier, balance: result.balance, autoWin: true, payout: result.payout, fullReveal: result.fullReveal };
   }
 
   await round.save();
@@ -204,7 +233,7 @@ async function settleCashOut(round, multiplier) {
 
   await recordCasinoBet(round, { won: true, payout, multiplier });
 
-  return { balance: user.balance, payout };
+  return { balance: user.balance, payout, fullReveal: buildFullReveal(round, null) };
 }
 
 /** Manual cash-out — requires at least one safe tile revealed. */
@@ -234,7 +263,7 @@ async function giveUp(userId, roundId) {
 
   await recordCasinoBet(round, { won: false, payout: 0, multiplier: 0 });
 
-  return { ok: true };
+  return { ok: true, fullReveal: buildFullReveal(round, null) };
 }
 
 module.exports = { GRID_SIZE, calcMultiplier, startRound, revealTile, cashOut, giveUp };
