@@ -137,16 +137,15 @@ async function revealTile(userId, roundId, tileIndex) {
   if (!Number.isInteger(idx) || idx < 0 || idx >= GRID_SIZE) throw new Error('Invalid tile');
   if (round.revealedTiles.includes(idx)) throw new Error('Tile already revealed');
 
-  const tilesLeft = GRID_SIZE - round.revealedTiles.length;
-  const isFirstReveal = round.revealedTiles.length === 0;
-
-  // houseMode forces a bust on the first pick, whichever tile it is —
-  // matches "0% win" meaning the bomb comes immediately. Once a round
-  // survives past its first reveal it's already in fair-mode territory,
-  // since houseMode rounds never make it past reveal #1.
-  const isBomb = (round.houseMode && isFirstReveal)
-    ? true
-    : Math.random() < round.minesCount / tilesLeft; // true hypergeometric odds
+  // houseMode is decided once, at round start, from the admin's win-rate
+  // control — and it governs the WHOLE round, not just the first pick.
+  // This is what makes "Win rate: 100%" in the admin panel actually mean
+  // "this player always wins" (never a bomb, any tile, the entire round)
+  // and "Win rate: 0%" mean "always loses" (bomb on whichever tile they
+  // pick) — previously only the very first reveal was forced, and every
+  // reveal after that fell back to true random odds, which could still
+  // hit a bomb even on a round the admin had set to 100% win.
+  const isBomb = round.houseMode;
 
   if (isBomb) {
     round.status = 'busted';
