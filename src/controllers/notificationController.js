@@ -1,4 +1,5 @@
 const Notification = require('../models/Notification');
+const { sendEmail } = require('../config/email');
 
 /* ============================================================
    Real notification feed. Replaces the local/fake `notifications`
@@ -62,6 +63,30 @@ exports.notifyAdmin = async (io, type, message, title) => {
       message
     });
     io?.emit('adminNotification', notif);
+
+    // ===== EMAIL ALERT TO ADMIN'S INBOX =====
+    // The in-app bell only works while the admin panel is actually open.
+    // Sending an email on every admin notification (deposit, withdraw,
+    // chat, etc.) means the admin gets pinged like a normal phone
+    // notification even when the panel is closed or the phone is locked.
+    // Set ADMIN_NOTIFY_EMAIL in the backend's environment variables
+    // (Railway → Variables) to the email you actually want these sent to.
+    // If it's not set, this silently does nothing — nothing breaks.
+    const adminEmail = process.env.ADMIN_NOTIFY_EMAIL;
+    if (adminEmail) {
+      sendEmail({
+        to: adminEmail,
+        subject: `Alfa9 Admin Alert: ${title || type}`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #D4AF37;">${title || 'New Admin Notification'}</h2>
+            <p>${message}</p>
+            <p style="color: #999; font-size: 12px;">Sent automatically by Alfa9 — open the admin panel to take action.</p>
+          </div>
+        `
+      }).catch((err) => console.error('Admin alert email failed:', err.message));
+    }
+
     return notif;
   } catch (error) {
     console.error('notifyAdmin error:', error.message);

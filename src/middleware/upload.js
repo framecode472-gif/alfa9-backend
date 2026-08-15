@@ -1,22 +1,15 @@
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 
-const UPLOAD_DIR = path.join(__dirname, '..', '..', 'uploads', 'screenshots');
-
-// Make sure the folder exists before multer tries to write into it
-if (!fs.existsSync(UPLOAD_DIR)) {
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, UPLOAD_DIR),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname) || '.jpg';
-    const unique = `${req.user?.id || 'anon'}-${Date.now()}${ext}`;
-    cb(null, unique);
-  }
-});
+// ===== WHY MEMORY STORAGE, NOT DISK =====
+// Railway (like most container hosts) wipes the local filesystem on every
+// redeploy/restart. Screenshots saved with diskStorage were disappearing
+// after the very next deploy, leaving old Deposit records pointing at a
+// file that no longer exists (404 "Route not found"). Storing the image
+// bytes straight into MongoDB alongside the deposit record means the
+// screenshot survives redeploys forever, exactly like the rest of the
+// deposit data. See depositController.createDeposit for where the buffer
+// gets turned into a base64 data URI and saved.
+const storage = multer.memoryStorage();
 
 function fileFilter(req, file, cb) {
   if (!file.mimetype.startsWith('image/')) {
@@ -28,7 +21,9 @@ function fileFilter(req, file, cb) {
 const upload = multer({
   storage,
   fileFilter,
-  limits: { fileSize: 20 * 1024 * 1024 } // 20MB — full-resolution desktop screenshots can be several MB
+  // Kept well under MongoDB's 16MB document limit once base64-encoded
+  // (base64 adds ~33% size), so an 8MB screenshot -> ~10.7MB encoded is safe.
+  limits: { fileSize: 8 * 1024 * 1024 }
 });
 
 module.exports = upload;

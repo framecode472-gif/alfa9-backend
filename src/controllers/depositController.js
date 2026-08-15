@@ -3,7 +3,6 @@ const User = require('../models/User');
 const Transaction = require('../models/Transaction');
 const mongoose = require('mongoose');
 const crypto = require('crypto');
-const fs = require('fs');
 const { notifyAdmin } = require('./notificationController');
 const { generateOrderNumber } = require('../utils/orderNumber');
 
@@ -25,8 +24,12 @@ exports.createDeposit = async (req, res) => {
     // block the submission outright (a false positive would wrongly stop a
     // genuine deposit), but we flag it clearly so admin sees it immediately
     // instead of having to eyeball every screenshot for reuse.
-    const fileBuffer = fs.readFileSync(req.file.path);
+    // req.file.buffer comes straight from multer's memoryStorage (no disk
+    // write), so this hash — and the image itself — always survives a
+    // Railway redeploy.
+    const fileBuffer = req.file.buffer;
     const screenshotHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+    const screenshotDataUri = `data:${req.file.mimetype};base64,${fileBuffer.toString('base64')}`;
 
     const priorMatch = await Deposit.findOne({
       screenshotHash,
@@ -54,7 +57,7 @@ exports.createDeposit = async (req, res) => {
       method,
       transactionId,
       orderNumber,
-      screenshot: `/uploads/screenshots/${req.file.filename}`,
+      screenshot: screenshotDataUri,
       screenshotHash,
       flagged,
       flagReason
