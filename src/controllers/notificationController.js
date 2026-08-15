@@ -6,6 +6,60 @@ const { sendEmail } = require('../config/email');
    state in both AdminPanel.jsx and Notification.jsx once wired.
    ============================================================ */
 
+// ===== BRANDED ADMIN ALERT EMAIL TEMPLATE =====
+// Matches the app's gold-on-black look. Built with a table layout and
+// inline styles only (no external CSS/fonts) because that's what actually
+// renders consistently across Gmail, Outlook, etc.
+const ADMIN_PANEL_URL = `${(process.env.FRONTEND_URL || 'https://alfa9.vercel.app').replace(/\/$/, '')}/admin`;
+const LOGO_URL = `${(process.env.FRONTEND_URL || 'https://alfa9.vercel.app').replace(/\/$/, '')}/image/ALFA_9_LOGO.png`;
+
+const TYPE_BADGES = {
+  deposit: { label: 'DEPOSIT', color: '#2ecc71' },
+  withdraw: { label: 'WITHDRAW', color: '#e05252' },
+  chat: { label: 'CHAT', color: '#4aa3ff' },
+  flagged: { label: 'FLAGGED', color: '#e05252' }
+};
+
+function buildAdminAlertHtml(type, title, message) {
+  const badge = TYPE_BADGES[type] || { label: (type || 'ALERT').toUpperCase(), color: '#D4AF37' };
+
+  return `
+  <div style="background:#0a0a0a; padding:32px 16px; font-family:Arial, Helvetica, sans-serif;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px; margin:0 auto; background:#141414; border:1px solid #2a2210; border-radius:14px; overflow:hidden;">
+      <tr>
+        <td style="background:linear-gradient(135deg,#1a1a1a,#0a0a0a); padding:24px 28px; text-align:center; border-bottom:1px solid #2a2210;">
+          <img src="${LOGO_URL}" alt="Alfa9" width="72" style="display:block; margin:0 auto 4px auto;" />
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:28px 28px 8px 28px;">
+          <span style="display:inline-block; background:${badge.color}22; color:${badge.color}; border:1px solid ${badge.color}55; font-size:11px; font-weight:bold; letter-spacing:0.6px; padding:4px 10px; border-radius:20px;">${badge.label}</span>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:8px 28px 4px 28px;">
+          <h1 style="margin:0; color:#D4AF37; font-size:20px; font-weight:700;">${title || 'New Admin Notification'}</h1>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:10px 28px 26px 28px;">
+          <p style="margin:0; color:#e8e0cf; font-size:15px; line-height:1.6;">${message}</p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:0 28px 28px 28px;">
+          <a href="${ADMIN_PANEL_URL}" style="display:block; text-align:center; background:#D4AF37; color:#140A03; text-decoration:none; font-weight:bold; font-size:14px; padding:13px 20px; border-radius:9px;">Open Admin Panel →</a>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:16px 28px 24px 28px; border-top:1px solid #2a2210;">
+          <p style="margin:0; color:#8a8272; font-size:11px; line-height:1.5;">Sent automatically by Alfa9. This alert was generated because a new event needs your review.</p>
+        </td>
+      </tr>
+    </table>
+  </div>`;
+}
+
 // GET /api/notifications/my
 exports.getMyNotifications = async (req, res) => {
   try {
@@ -77,13 +131,7 @@ exports.notifyAdmin = async (io, type, message, title) => {
       sendEmail({
         to: adminEmail,
         subject: `Alfa9 Admin Alert: ${title || type}`,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #D4AF37;">${title || 'New Admin Notification'}</h2>
-            <p>${message}</p>
-            <p style="color: #999; font-size: 12px;">Sent automatically by Alfa9 — open the admin panel to take action.</p>
-          </div>
-        `
+        html: buildAdminAlertHtml(type, title, message)
       }).catch((err) => console.error('Admin alert email failed:', err.message));
     }
 
