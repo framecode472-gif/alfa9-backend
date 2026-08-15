@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const User = require('../models/User');
 const Transaction = require('../models/Transaction');
 
@@ -37,8 +38,17 @@ exports.login = async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
+    // ===== SINGLE-DEVICE SESSION =====
+    // A fresh sessionId is generated on every login and saved on the user.
+    // Any token issued before this moment (i.e. a session on another
+    // browser/device) now carries a stale `sid` and will be rejected by
+    // the auth middleware — that's what forces the older session to log out.
+    const sessionId = crypto.randomBytes(16).toString('hex');
+    user.sessionId = sessionId;
+    await user.save();
+
     const token = jwt.sign(
-      { id: user._id, role: user.role },
+      { id: user._id, role: user.role, sid: sessionId },
       JWT_SECRET,
       { expiresIn: '7d' }
     );
@@ -187,6 +197,8 @@ exports.register = async (req, res) => {
       uplineChain
     });
 
+    const sessionId = crypto.randomBytes(16).toString('hex');
+    user.sessionId = sessionId;
     await user.save();
 
     // Create the referral record AFTER the user exists, so invitedUserId
@@ -208,7 +220,7 @@ exports.register = async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: user._id, role: user.role },
+      { id: user._id, role: user.role, sid: sessionId },
       JWT_SECRET,
       { expiresIn: '7d' }
     );

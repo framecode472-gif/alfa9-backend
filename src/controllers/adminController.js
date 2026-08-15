@@ -1,4 +1,6 @@
 const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const User = require('../models/User');
 const Deposit = require('../models/Deposit');
 const Withdraw = require('../models/Withdraw');
@@ -6,6 +8,7 @@ const Transaction = require('../models/Transaction');
 const GameSetting = require('../models/GameSetting');
 const Gift = require('../models/Gift');
 const Bonus = require('../models/Bonus');
+const Referral = require('../models/Referral');
 const { calculateDepositBonus } = require('../utils/depositBonus');
 const { notifyUser } = require('./notificationController');
 
@@ -228,6 +231,102 @@ exports.deleteUser = async (req, res) => {
 
     res.json({ message: 'User deleted successfully' });
 
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// ========== ADMIN PASSWORD RESET ==========
+// WHY THIS INSTEAD OF SHOWING THE USER'S PASSWORD:
+// Passwords are bcrypt-hashed (one-way) before they're ever saved — that's
+// intentional and standard practice, so there is literally no "original
+// password" stored anywhere to display, even for the admin. Showing a
+// password on screen would also mean storing it in plain text somewhere,
+// which is a serious security risk if the database or admin panel is ever
+// compromised (every user's real password would be exposed at once).
+//
+// This does the same job the admin actually needs — helping a user who's
+// locked out — without that risk: it generates a brand-new random
+// password, saves its hash, and returns the plain password ONCE in this
+// response only, so the admin can read it out / message it to the user.
+// It is never stored anywhere in plain text and never shown again after
+// this response.
+exports.resetUserPassword = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    // 8-char mixed-case + digit temp password, easy to read aloud/type
+    const tempPassword = crypto.randomBytes(6).toString('base64')
+      .replace(/[^a-zA-Z0-9]/g, '')
+      .slice(0, 8) || 'Alfa9Reset1';
+
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(tempPassword, salt);
+    // Also rotate their session so any device currently logged in gets
+    // signed out — important since their password just changed.
+    user.sessionId = null;
+    await user.save();
+
+    res.json({
+      message: 'Password reset successfully',
+      tempPassword,
+      note: 'Share this password with the user now — it will not be shown again. They can change it after logging in.'
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// ========== REFERRALS (per user, for admin) ==========
+// GET /api/admin/users/:userId/referrals — everyone this user has invited,
+// enriched with each invited user's current stats (deposits/withdrawals/
+// balance/status) so admin can see the real value of that referral, not
+// just a headcount.
+exports.getUserReferrals = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const referrals = await Referral.find({ referrerId: userId }).sort({ createdAt: -1 });
+
+    const enriched = await Promise.all(referrals.map(async (r) => {
+      const invited = await User.findById(r.invitedUserId).select('name uid email phone balance status createdAt');
+      if (!invited) {
+        return { _id: r._id, status: r.status, bonusAmount: r.bonusAmount, createdAt: r.createdAt, invitedUser: null };
+      }
+
+      const [depositAgg, withdrawAgg] = await Promise.all([
+        Deposit.aggregate([
+          { $match: { userId: invited._id, status: 'approved' } },
+          { $group: { _id: null, total: { $sum: '$amount' } } }
+        ]),
+        Withdraw.aggregate([
+          { $match: { userId: invited._id, status: 'approved' } },
+          { $group: { _id: null, total: { $sum: '$amount' } } }
+        ])
+      ]);
+
+      return {
+        _id: r._id,
+        status: r.status,
+        bonusAmount: r.bonusAmount,
+        createdAt: r.createdAt,
+        invitedUser: {
+          id: invited._id,
+          name: invited.name,
+          uid: invited.uid,
+          email: invited.email,
+          phone: invited.phone,
+          balance: invited.balance,
+          status: invited.status,
+          joinedAt: invited.createdAt,
+          totalDeposited: depositAgg[0]?.total || 0,
+          totalWithdrawn: withdrawAgg[0]?.total || 0
+        }
+      };
+    }));
+
+    res.json({ referrals: enriched, count: enriched.length });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

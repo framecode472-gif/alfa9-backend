@@ -23,6 +23,19 @@ exports.auth = async (req, res, next) => {
       return res.status(401).json({ message: 'User not found' });
     }
 
+    // ===== SINGLE-DEVICE SESSION CHECK =====
+    // Only tokens issued by login/register carry a `sid` (admin tokens
+    // don't, so admin logins are unaffected). If this token's sid no
+    // longer matches the user's current sessionId, they logged in on
+    // another device since this token was issued — reject with a specific
+    // code so the frontend can force-logout back to the login screen.
+    if (decoded.sid && user.sessionId && decoded.sid !== user.sessionId) {
+      return res.status(401).json({
+        message: 'You have been logged out because this account was signed in on another device.',
+        code: 'SESSION_INVALIDATED'
+      });
+    }
+
     req.user = user;
     next();
 

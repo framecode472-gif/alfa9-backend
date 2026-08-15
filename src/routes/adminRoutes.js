@@ -16,6 +16,8 @@ router.get('/users', auth, admin, adminController.getAllUsers);
 router.get('/users/:userId', auth, admin, adminController.getUserById);
 router.put('/users/:userId', auth, admin, adminController.updateUser);
 router.delete('/users/:userId', auth, admin, adminController.deleteUser);
+router.post('/users/:userId/reset-password', auth, admin, adminController.resetUserPassword);
+router.get('/users/:userId/referrals', auth, admin, adminController.getUserReferrals);
 
 // Wagering / turnover requirement (withdrawal gate) — "need to bet before withdraw"
 router.get('/users/:userId/wagering', auth, admin, adminController.getWagering);

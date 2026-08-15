@@ -125,6 +125,17 @@ const UserSchema = new mongoose.Schema({
     lastResetDate: { type: String, default: null }      // "YYYY-MM-DD", drives the daily reset
   },
   // ==================================
+  // ===== SINGLE-DEVICE SESSION (only one active login at a time) =====
+  // Every successful login/register generates a new random sessionId and
+  // stores it here, AND stamps it into that login's JWT as `sid`. The auth
+  // middleware compares the token's `sid` against this field on every
+  // request — if they don't match, it means someone logged in again
+  // elsewhere (different browser/device) since this token was issued, so
+  // this older session gets rejected and the app force-logs the user out.
+  sessionId: {
+    type: String,
+    default: null
+  },
   createdAt: { 
     type: Date, 
     default: Date.now 
