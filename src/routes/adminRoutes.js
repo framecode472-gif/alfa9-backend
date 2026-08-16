@@ -25,6 +25,7 @@ router.put('/users/:userId/wagering', auth, admin, adminController.updateWagerin
 
 // Deposits (for admin panel)
 router.get('/deposits', auth, admin, adminController.getAllDeposits);
+router.get('/deposits/:depositId/screenshot', auth, admin, adminController.getDepositScreenshot);
 router.put('/deposits/:depositId/approve', auth, admin, adminController.approveDepositAdmin);
 router.put('/deposits/:depositId/reject', auth, admin, adminController.rejectDepositAdmin);
 router.post('/deposits/bulk-approve', auth, admin, adminController.bulkApproveDeposits);

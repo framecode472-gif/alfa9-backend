@@ -118,7 +118,7 @@ exports.getUserById = async (req, res) => {
     if (!user) return res.status(404).json({ message: 'User not found' });
 
     const transactions = await Transaction.find({ userId }).sort({ createdAt: -1 }).limit(50);
-    const deposits = await Deposit.find({ userId }).sort({ createdAt: -1 });
+    const deposits = await Deposit.find({ userId }).select('-screenshot').sort({ createdAt: -1 });
     const withdrawals = await Withdraw.find({ userId }).sort({ createdAt: -1 });
 
     res.json({ user, transactions, deposits, withdrawals });
@@ -246,24 +246,34 @@ exports.deleteUser = async (req, res) => {
 // compromised (every user's real password would be exposed at once).
 //
 // This does the same job the admin actually needs — helping a user who's
-// locked out — without that risk: it generates a brand-new random
-// password, saves its hash, and returns the plain password ONCE in this
-// response only, so the admin can read it out / message it to the user.
-// It is never stored anywhere in plain text and never shown again after
-// this response.
+// locked out — without that risk. The admin can either:
+//   (a) type a specific password themselves (e.g. the user told them what
+//       they want over chat/phone) — pass it as `newPassword` in the body, or
+//   (b) leave it blank to auto-generate a random one.
+// Either way, only the hash is ever saved — the plain password is returned
+// ONCE in this response so the admin can relay it, and is never stored or
+// shown again after this.
 exports.resetUserPassword = async (req, res) => {
   try {
     const { userId } = req.params;
+    const { newPassword } = req.body || {};
+
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ message: 'User not found' });
 
-    // 8-char mixed-case + digit temp password, easy to read aloud/type
-    const tempPassword = crypto.randomBytes(6).toString('base64')
-      .replace(/[^a-zA-Z0-9]/g, '')
-      .slice(0, 8) || 'Alfa9Reset1';
+    let passwordToSet = (newPassword || '').trim();
+    if (passwordToSet && passwordToSet.length < 4) {
+      return res.status(400).json({ message: 'Password must be at least 4 characters' });
+    }
+    if (!passwordToSet) {
+      // 8-char mixed-case + digit temp password, easy to read aloud/type
+      passwordToSet = crypto.randomBytes(6).toString('base64')
+        .replace(/[^a-zA-Z0-9]/g, '')
+        .slice(0, 8) || 'Alfa9Reset1';
+    }
 
     const salt = await bcrypt.genSalt(10);
-    user.password = await bcrypt.hash(tempPassword, salt);
+    user.password = await bcrypt.hash(passwordToSet, salt);
     // Also rotate their session so any device currently logged in gets
     // signed out — important since their password just changed.
     user.sessionId = null;
@@ -271,7 +281,7 @@ exports.resetUserPassword = async (req, res) => {
 
     res.json({
       message: 'Password reset successfully',
-      tempPassword,
+      tempPassword: passwordToSet,
       note: 'Share this password with the user now — it will not be shown again. They can change it after logging in.'
     });
   } catch (error) {
@@ -339,7 +349,17 @@ exports.getAllDeposits = async (req, res) => {
     const query = {};
     if (status) query.status = status;
 
+    // ===== WHY .select('-screenshot') =====
+    // Each screenshot is stored as a base64 data URI directly on the
+    // Deposit document (up to ~10.7MB once encoded — see depositController
+    // for why). Loading 20 of those per page for every tab switch was the
+    // entire reason Pending/Approved/Rejected took 7-8 seconds to load —
+    // the list doesn't need the actual image bytes, just to know one
+    // exists (screenshotHash, kept here, tells us that cheaply). The image
+    // itself is fetched on-demand only when the admin opens the receipt
+    // lightbox — see getDepositScreenshot below.
     const deposits = await Deposit.find(query)
+      .select('-screenshot')
       .populate('userId', 'name email phone uid')
       .sort({ createdAt: -1 })
       .limit(parseInt(limit))
@@ -352,6 +372,23 @@ exports.getAllDeposits = async (req, res) => {
       pagination: { total, page: parseInt(page), limit: parseInt(limit), pages: Math.ceil(total / parseInt(limit)) }
     });
 
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// GET /api/admin/deposits/:depositId/screenshot — fetches ONLY the image
+// bytes for one deposit, on demand. Called only when the admin actually
+// opens the receipt lightbox, instead of every deposit's full image
+// riding along on the list endpoint (see getAllDeposits above).
+exports.getDepositScreenshot = async (req, res) => {
+  try {
+    const { depositId } = req.params;
+    const deposit = await Deposit.findById(depositId).select('screenshot');
+    if (!deposit || !deposit.screenshot) {
+      return res.status(404).json({ message: 'Screenshot not found' });
+    }
+    res.json({ screenshot: deposit.screenshot });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
