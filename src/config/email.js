@@ -1,31 +1,50 @@
-// ===== WHY RESEND INSTEAD OF GMAIL SMTP =====
-// Railway (like most cloud hosts) blocks outbound SMTP connections by
-// default — that's exactly what caused the "Connection timeout" /
-// ETIMEDOUT error when we tried talking to Gmail's SMTP server directly.
-// Resend sends email over a normal HTTPS API call instead of raw SMTP, so
-// it isn't blocked. Sign up free at resend.com, grab an API key, and set
-// RESEND_API_KEY in Railway's Variables tab — no domain verification
-// needed since we send from Resend's shared "onboarding@resend.dev"
-// address, which is fine for admin alerts to your own inbox.
+// ===== WHY BREVO INSTEAD OF RESEND'S SANDBOX ADDRESS =====
+// Resend's shared "onboarding@resend.dev" address can ONLY send to the
+// email the Resend account was signed up with — it hard-blocks sending to
+// anyone else until a real domain is verified. That's fine for admin
+// alerts (they go to your own inbox), but it silently can't deliver
+// password-reset codes to actual users' Gmail addresses.
+// Brevo's free plan lets you send to ANY recipient today, no domain
+// needed — you just verify ONE sender email address (see setup below).
+// When you buy a domain later, authenticating it in Brevo improves
+// deliverability (less chance of landing in spam) but isn't required to
+// get this working right now.
+//
+// SETUP (5 minutes):
+// 1. Sign up free at brevo.com
+// 2. Senders, Domains & Dedicated IPs → Senders → add your own email
+//    (e.g. saifullahowner301@gmail.com) → click the verification link
+//    Brevo emails to that inbox
+// 3. SMTP & API → API Keys → Generate a new API key
+// 4. Set these in Railway → Variables:
+//    BREVO_API_KEY = the key from step 3
+//    BREVO_SENDER_EMAIL = the exact email you verified in step 2
 
-const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const FROM_ADDRESS = process.env.RESEND_FROM || 'Alfa9 Support <onboarding@resend.dev>';
+const BREVO_API_KEY = process.env.BREVO_API_KEY;
+const SENDER_EMAIL = process.env.BREVO_SENDER_EMAIL;
+const SENDER_NAME = process.env.BREVO_SENDER_NAME || 'Alfa9';
 
 // Send email function
 exports.sendEmail = async ({ to, subject, html }) => {
-  if (!RESEND_API_KEY) {
-    console.error('Email error: RESEND_API_KEY is not set in environment variables — email not sent.');
-    return { success: false, error: 'RESEND_API_KEY not set' };
+  if (!BREVO_API_KEY || !SENDER_EMAIL) {
+    console.error('Email error: BREVO_API_KEY or BREVO_SENDER_EMAIL is not set in environment variables — email not sent.');
+    return { success: false, error: 'BREVO_API_KEY or BREVO_SENDER_EMAIL not set' };
   }
 
   try {
-    const response = await fetch('https://api.resend.com/emails', {
+    const response = await fetch('https://api.brevo.com/v3/smtp/email', {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${RESEND_API_KEY}`,
-        'Content-Type': 'application/json'
+        'api-key': BREVO_API_KEY,
+        'Content-Type': 'application/json',
+        Accept: 'application/json'
       },
-      body: JSON.stringify({ from: FROM_ADDRESS, to, subject, html })
+      body: JSON.stringify({
+        sender: { email: SENDER_EMAIL, name: SENDER_NAME },
+        to: [{ email: to }],
+        subject,
+        htmlContent: html
+      })
     });
 
     const data = await response.json();
@@ -35,8 +54,8 @@ exports.sendEmail = async ({ to, subject, html }) => {
       return { success: false, error: data };
     }
 
-    console.log('Email sent:', data.id);
-    return { success: true, messageId: data.id };
+    console.log('Email sent:', data.messageId);
+    return { success: true, messageId: data.messageId };
   } catch (error) {
     console.error('Email error:', error);
     return { success: false, error: error.message };
