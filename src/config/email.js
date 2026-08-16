@@ -43,23 +43,39 @@ exports.sendEmail = async ({ to, subject, html }) => {
   }
 };
 
-// Password reset email template
-exports.sendPasswordResetEmail = async (email, resetToken) => {
-  const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
-
+// Password reset email — sends the 4-digit code the user types into the
+// OTP boxes on the frontend (not a clickable link).
+exports.sendPasswordResetEmail = async (email, otp) => {
   const html = `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #D4AF37;">Alfa9 - Password Reset</h2>
-      <p>You requested a password reset. Click the button below to reset your password:</p>
-      <a href="${resetLink}" style="display: inline-block; background: #D4AF37; color: #000; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold;">Reset Password</a>
-      <p style="margin-top: 20px; color: #666;">Or copy this link: ${resetLink}</p>
-      <p style="color: #999; font-size: 12px;">This link expires in 1 hour.</p>
+    <div style="background:#0a0a0a; padding:32px 16px; font-family:Arial, Helvetica, sans-serif;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:420px; margin:0 auto; background:#141414; border:1px solid #2a2210; border-radius:14px; overflow:hidden;">
+        <tr>
+          <td style="padding:28px 28px 8px 28px; text-align:center;">
+            <h1 style="margin:0; color:#D4AF37; font-size:20px;">Alfa9 — Password Reset</h1>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:10px 28px 8px 28px; text-align:center;">
+            <p style="margin:0; color:#e8e0cf; font-size:14px; line-height:1.6;">Use this code to reset your password. It expires in 15 minutes.</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:20px 28px; text-align:center;">
+            <div style="display:inline-block; background:#1a1a1a; border:1px solid #D4AF37; border-radius:10px; padding:16px 32px; font-size:32px; font-weight:800; letter-spacing:10px; color:#D4AF37;">${otp}</div>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:8px 28px 26px 28px; text-align:center;">
+            <p style="margin:0; color:#8a8272; font-size:12px;">If you didn't request this, you can safely ignore this email — your password won't change.</p>
+          </td>
+        </tr>
+      </table>
     </div>
   `;
 
   return await exports.sendEmail({
     to: email,
-    subject: 'Alfa9 - Password Reset Request',
+    subject: `Alfa9 password reset code: ${otp}`,
     html
   });
 };

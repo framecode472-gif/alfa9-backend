@@ -75,59 +75,90 @@ exports.login = async (req, res) => {
 
 const { sendPasswordResetEmail } = require('../config/email');
 
-// ===== FORGOT PASSWORD (with real email) =====
+// ===== FORGOT PASSWORD (real 4-digit OTP, emailed) =====
+// Accepts either an email or phone as `identifier` — but the code can only
+// be emailed, so an account with no email on file can't use this flow yet.
 exports.forgotPassword = async (req, res) => {
   try {
-    const { email } = req.body;
-    
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+    const identifier = (req.body.identifier || req.body.email || '').trim();
+    if (!identifier) {
+      return res.status(400).json({ message: 'Enter your email or phone number' });
     }
 
-    const resetToken = jwt.sign(
-      { id: user._id },
-      JWT_SECRET,
-      { expiresIn: '1h' }
-    );
-
-    // Send real email
-    const emailResult = await sendPasswordResetEmail(email, resetToken);
-    
-    if (!emailResult.success) {
-      return res.status(500).json({ message: 'Failed to send email' });
-    }
-
-    res.json({
-      message: 'Password reset link sent to your email'
+    const user = await User.findOne({
+      $or: [{ email: identifier.toLowerCase() }, { phone: identifier }]
     });
+
+    // Deliberately vague message either way (account exists or not) so
+    // this endpoint can't be used to check which emails/phones are
+    // registered — a real security concern, same reason login errors
+    // don't say "wrong password" vs "no such user".
+    const genericResponse = { message: 'If an account exists, a verification code has been sent to its email.' };
+
+    if (!user || !user.email) {
+      return res.json(genericResponse);
+    }
+
+    // 4-digit numeric code, matches the OTP input boxes on the frontend.
+    const otp = Math.floor(1000 + Math.random() * 9000).toString();
+    user.resetOtp = otp;
+    user.resetOtpExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+    await user.save();
+
+    const emailResult = await sendPasswordResetEmail(user.email, otp);
+    if (!emailResult.success) {
+      return res.status(500).json({ message: 'Failed to send email — please try again' });
+    }
+
+    res.json(genericResponse);
 
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
-// ===== RESET PASSWORD =====
+// ===== RESET PASSWORD (verify OTP, then set new password) =====
 exports.resetPassword = async (req, res) => {
   try {
-    const { resetToken, newPassword } = req.body;
+    const identifier = (req.body.identifier || req.body.email || '').trim();
+    const { otp, newPassword } = req.body;
 
-    const decoded = jwt.verify(resetToken, JWT_SECRET);
-    const user = await User.findById(decoded.id);
-    
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+    if (!identifier || !otp || !newPassword) {
+      return res.status(400).json({ message: 'Missing email, code, or new password' });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters' });
     }
 
-    // Hash new password
+    const user = await User.findOne({
+      $or: [{ email: identifier.toLowerCase() }, { phone: identifier }]
+    });
+
+    if (!user || !user.resetOtp || !user.resetOtpExpires) {
+      return res.status(400).json({ message: 'Invalid or expired code — request a new one' });
+    }
+    if (user.resetOtpExpires < new Date()) {
+      user.resetOtp = null;
+      user.resetOtpExpires = null;
+      await user.save();
+      return res.status(400).json({ message: 'Code expired — request a new one' });
+    }
+    if (String(otp).trim() !== user.resetOtp) {
+      return res.status(400).json({ message: 'Incorrect code' });
+    }
+
     const salt = await bcrypt.genSalt(10);
     user.password = await bcrypt.hash(newPassword, salt);
+    user.resetOtp = null;
+    user.resetOtpExpires = null;
+    // Password just changed — sign out any device currently logged in.
+    user.sessionId = null;
     await user.save();
 
     res.json({ message: 'Password reset successfully' });
 
   } catch (error) {
-    res.status(400).json({ message: 'Invalid or expired token' });
+    res.status(500).json({ error: error.message });
   }
 };
 

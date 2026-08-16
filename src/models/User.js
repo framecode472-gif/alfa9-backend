@@ -136,6 +136,13 @@ const UserSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  // ===== FORGOT PASSWORD OTP =====
+  // A short-lived 4-digit code emailed to the user when they request a
+  // password reset. Cleared immediately after a successful reset (or once
+  // expired, it's simply ignored/overwritten by the next request).
+  resetOtp: { type: String, default: null },
+  resetOtpExpires: { type: Date, default: null },
+
   createdAt: { 
     type: Date, 
     default: Date.now 
