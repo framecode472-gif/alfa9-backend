@@ -101,8 +101,30 @@ exports.getAllUsers = async (req, res) => {
 
     const total = await User.countDocuments(query);
 
+    // ===== WHY LIVE REFERRAL COUNTS, NOT THE STORED COUNTER =====
+    // referralCount used to be incremented at signup time BEFORE the
+    // actual Referral record was guaranteed to be created — an old bug
+    // (now fixed, see authController.register) meant some signups bumped
+    // the counter without ever saving a Referral document. That leaves
+    // stale accounts where the badge (e.g. "20 referred") doesn't match
+    // the real number of rows in the referrals modal (e.g. 7). Counting
+    // actual Referral documents here means the two numbers can never
+    // disagree again, without needing to touch old data.
+    const userIds = users.map((u) => u._id);
+    const counts = await Referral.aggregate([
+      { $match: { referrerId: { $in: userIds } } },
+      { $group: { _id: '$referrerId', count: { $sum: 1 } } }
+    ]);
+    const countMap = {};
+    counts.forEach((c) => { countMap[c._id.toString()] = c.count; });
+    const usersWithLiveReferralCounts = users.map((u) => {
+      const obj = u.toObject();
+      obj.referralCount = countMap[u._id.toString()] || 0;
+      return obj;
+    });
+
     res.json({
-      users,
+      users: usersWithLiveReferralCounts,
       pagination: { total, page: parseInt(page), limit: parseInt(limit), pages: Math.ceil(total / parseInt(limit)) }
     });
 
