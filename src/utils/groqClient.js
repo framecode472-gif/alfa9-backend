@@ -4,7 +4,11 @@
  * the key in source.
  */
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const MODEL = 'llama-3.3-70b-versatile'; // fast + free-tier friendly; swap here if Groq changes tier limits
+// llama-3.3-70b-versatile was deprecated/shut down by Groq (announced
+// June 2026) — every request to it now fails, which is why the chatbot
+// was falling back to "Sorry, I'm having trouble connecting right now".
+// openai/gpt-oss-120b is Groq's own recommended replacement.
+const MODEL = 'openai/gpt-oss-120b';
 
 async function askGroq(messages) {
   if (!process.env.GROQ_API_KEY) {
