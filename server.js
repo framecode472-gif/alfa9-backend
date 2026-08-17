@@ -67,6 +67,18 @@ app.use((req, res, next) => {
 // Socket.io connection
 io.on('connection', (socket) => {
   console.log('🟢 Client connected:', socket.id);
+
+  // A chat widget joins its own conversation's room so it can receive the
+  // delayed AI reply / an admin's manual reply / seen-status updates in
+  // real time, without polling.
+  socket.on('joinChat', (sessionId) => {
+    if (sessionId) socket.join(`chat:${sessionId}`);
+  });
+
+  // The admin panel's AI Chats tab joins this shared room so the
+  // conversation list can live-refresh whenever any user sends a message.
+  socket.on('joinAdminChats', () => socket.join('admin-chats'));
+
   socket.on('disconnect', () => console.log('🔴 Client disconnected:', socket.id));
 });
 

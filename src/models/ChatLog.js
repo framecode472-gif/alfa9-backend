@@ -9,8 +9,19 @@ const ChatLogSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   sessionId: { type: String, required: true }, // groups messages into one conversation
   messages: [{
-    role: { type: String, enum: ['user', 'assistant'], required: true },
-    content: { type: String, required: true },
+    // 'admin' = a real human admin typed this directly in the AI Chats panel,
+    // takes over from the AI for this conversation.
+    role: { type: String, enum: ['user', 'assistant', 'admin'], required: true },
+    content: { type: String, default: '' },
+    // Base64 data URI of an attached screenshot, if any (see depositController
+    // for why we store images as data URIs instead of disk paths — Railway
+    // wipes local disk on every redeploy).
+    imageUrl: { type: String, default: null },
+    // Only meaningful for role:'user' messages — has admin/AI "read" this
+    // yet? Flips true either when the delayed AI reply is generated, or
+    // when admin opens this conversation in the panel. Drives the
+    // Seen/Read indicator under the user's own sent messages.
+    seen: { type: Boolean, default: false },
     at: { type: Date, default: Date.now }
   }],
   createdAt: { type: Date, default: Date.now },

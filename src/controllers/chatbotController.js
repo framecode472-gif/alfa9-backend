@@ -15,12 +15,14 @@ What you can help with:
 - General account questions, navigation help, and explaining platform rules.
 - Being warm, concise, and clear — most users are on mobile and want quick answers.
 
-DEPOSIT / WITHDRAWAL NOT RECEIVED: If a user says their deposit or withdrawal hasn't arrived / been credited, don't guess a cause or a timeline. Ask them to share a screenshot of the transaction (payment receipt / withdrawal request) so the team can check it — tell them they can attach it right here in the chat, or submit it via the Feedback page if the chat can't take attachments yet.
+SCREENSHOTS / ATTACHMENTS: The chat widget lets users attach a screenshot directly (there's a "+" attach button right in the chat). When a message in this conversation includes "[The user attached a payment screenshot with this message.]", that means an image has ALREADY been received and saved — do not ask them to send it again and do not ask if they have a screenshot. Instead, acknowledge it plainly, e.g. "Theek hai, screenshot mil gaya hai — team jald hi check kar ke aapko update karegi" (or the English equivalent if they're writing in English). Only ask for a screenshot the FIRST time, before one has been attached in this conversation.
 
-TEAM / SALARY / HIRING / JOB QUESTIONS: If someone asks about joining the team, salary, jobs, partnerships, or anything that needs a real human/admin (not something you can answer from the platform info above), don't try to answer it yourself — give them the official contact:
+DEPOSIT / WITHDRAWAL NOT RECEIVED: If a user says their deposit or withdrawal hasn't arrived / been credited, don't guess a cause or a timeline. Ask them to attach a screenshot of the transaction (payment receipt / withdrawal request) using the attach button right here in the chat so the team can check it.
+
+TEAM / SALARY / HIRING / JOB QUESTIONS: If someone asks about joining the team, salary, jobs, partnerships, or anything that needs a real human/admin (not something you can answer from the platform info above), don't try to answer it yourself — immediately give them the official contact, nothing else:
 - Telegram: @Saifmarko (t.me/Saifmarko)
 - WhatsApp: +92 316 3533206 (wa.me/923163533206)
-Tell them to reach out there for that kind of query.
+Tell them to reach out there for that kind of query. Keep this reply short — just the contact info and a one-line pointer, no lengthy explanation.
 
 What you must NOT do:
 - Never claim to see or change a specific user's real balance, deposits, withdrawals, or bet history — you don't have live access to their account. If asked, explain you can't view live account data and direct them to check the relevant page in the app (Account > Wallet, Account > Transaction, etc.) or to submit a Feedback ticket for account-specific issues.
@@ -42,12 +44,79 @@ function getUserIdFromToken(req) {
   }
 }
 
-// POST /api/chatbot/message   body: { message, sessionId, history? }
+// ===== DELAYED AI REPLY =====
+// WHY A DELAY AT ALL: replying in under a second makes it obvious it's a
+// bot and feels impersonal. Waiting a random 2–3 minutes before the AI
+// actually answers feels like a real support agent picking up the
+// conversation, and gives a real admin a genuine window to jump in and
+// reply personally instead — see adminReply below. If an admin does reply
+// first, this function backs off instead of piling an AI answer on top.
+//
+// NOTE ON RELIABILITY: this uses a plain setTimeout, which lives only in
+// this server process's memory. If Railway restarts the service in that
+// 2–3 minute window (a deploy, a crash), that one pending reply is lost —
+// acceptable for this scale, but worth knowing. A stuck/never-replied
+// message will still show up for the admin to answer manually at any time.
+async function processAiReply(sessionId, io) {
+  try {
+    const log = await ChatLog.findOne({ sessionId });
+    if (!log) return;
+
+    const lastUnseenUser = [...log.messages].reverse().find((m) => m.role === 'user' && !m.seen);
+    if (!lastUnseenUser) return; // nothing new to reply to (already handled)
+
+    const lastAdminMsg = [...log.messages].reverse().find((m) => m.role === 'admin');
+    if (lastAdminMsg && lastAdminMsg.at > lastUnseenUser.at) {
+      // A real admin already replied after this message — they've taken
+      // over this conversation. Just mark it seen, skip the AI reply.
+      log.messages.forEach((m) => { if (m.role === 'user') m.seen = true; });
+      await log.save();
+      io?.to(`chat:${sessionId}`).emit('chatSeen', { sessionId });
+      return;
+    }
+
+    // Groq only understands 'user'/'assistant' roles — fold any admin
+    // messages into 'assistant' so the AI sees the full conversation.
+    const recentHistory = log.messages.slice(-20).map((m) => ({
+      role: m.role === 'admin' ? 'assistant' : m.role,
+      content: m.imageUrl
+        ? `${m.content || ''}${m.content ? ' ' : ''}[The user attached a payment screenshot with this message.]`.trim()
+        : m.content
+    }));
+
+    const groqMessages = [{ role: 'system', content: SYSTEM_PROMPT }, ...recentHistory];
+
+    let reply;
+    try {
+      reply = await askGroq(groqMessages);
+    } catch (e) {
+      reply = "Sorry, I'm having trouble connecting right now — please try again in a moment, or reach out on Telegram (@Saifmarko) if it's urgent.";
+    }
+
+    // The agent has now "read" everything up to this point.
+    log.messages.forEach((m) => { if (m.role === 'user') m.seen = true; });
+    log.messages.push({ role: 'assistant', content: reply, seen: true, at: new Date() });
+    log.updatedAt = new Date();
+    await log.save();
+
+    const savedMsg = log.messages[log.messages.length - 1];
+    io?.to(`chat:${sessionId}`).emit('chatMessage', { sessionId, message: savedMsg });
+    io?.to('admin-chats').emit('chatUpdated', { sessionId });
+  } catch (error) {
+    console.error('processAiReply error:', error.message);
+  }
+}
+
+// POST /api/chatbot/message   body: { message, sessionId, imageUrl? }
 // No auth required — the self-service widget can be used by guests.
+// Saves the message immediately and responds fast; the actual reply is
+// generated later by processAiReply (see the delay note above) and
+// delivered over socket.io — this endpoint does NOT return a reply anymore.
 exports.sendMessage = async (req, res) => {
   try {
-    const { message, sessionId } = req.body;
-    if (!message || !message.trim()) return res.status(400).json({ message: 'Message is required' });
+    const { message, sessionId, imageUrl } = req.body;
+    const trimmed = (message || '').trim();
+    if (!trimmed && !imageUrl) return res.status(400).json({ message: 'Message is required' });
     if (!sessionId) return res.status(400).json({ message: 'sessionId is required' });
 
     const userId = getUserIdFromToken(req);
@@ -55,29 +124,22 @@ exports.sendMessage = async (req, res) => {
     let log = await ChatLog.findOne({ sessionId });
     if (!log) log = new ChatLog({ sessionId, userId, messages: [] });
 
-    // Keep only the last 10 turns as context so requests stay small/fast
-    const recentHistory = log.messages.slice(-20).map(m => ({ role: m.role, content: m.content }));
-
-    const groqMessages = [
-      { role: 'system', content: SYSTEM_PROMPT },
-      ...recentHistory,
-      { role: 'user', content: message.trim() }
-    ];
-
-    const reply = await askGroq(groqMessages);
-
-    log.messages.push({ role: 'user', content: message.trim() });
-    log.messages.push({ role: 'assistant', content: reply });
+    log.messages.push({ role: 'user', content: trimmed, imageUrl: imageUrl || null, seen: false, at: new Date() });
     log.updatedAt = new Date();
     if (userId && !log.userId) log.userId = userId; // attach once they log in mid-chat
     await log.save();
 
-    // Let admin know a user is chatting with the AI agent right now — shows
-    // in the notification bell and points them at the new "AI Chats" tab.
+    // Let admin know a user is chatting right now — shows in the
+    // notification bell and points them at the AI Chats tab.
     const who = userId ? `member ${userId.toString().slice(-6)}` : 'a guest';
-    notifyAdmin(req.io, 'chat', `New message from ${who}: "${message.trim().slice(0, 80)}"`, 'AI Chat');
+    const preview = trimmed ? trimmed.slice(0, 80) : '(sent a screenshot)';
+    notifyAdmin(req.io, 'chat', `New message from ${who}: "${preview}"`, 'AI Chat');
+    req.io?.to('admin-chats').emit('chatUpdated', { sessionId });
 
-    res.json({ reply, sessionId });
+    const delayMs = (120 + Math.random() * 60) * 1000; // 2–3 minutes
+    setTimeout(() => processAiReply(sessionId, req.io), delayMs);
+
+    res.status(202).json({ queued: true, sessionId });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -85,19 +147,25 @@ exports.sendMessage = async (req, res) => {
 
 // POST /api/chatbot/upload   multipart/form-data: { image }
 // Used by the chat widget's "+" attach menu (screenshot / file). Public —
-// guests can attach too, same as sendMessage. Returns a URL the frontend
-// then shows in the chat bubble and sends along in a follow-up /message call.
+// guests can attach too, same as sendMessage.
+//
+// WHY A BASE64 DATA URI, NOT A DISK PATH: same reasoning as deposit
+// screenshots (see depositController) — Railway wipes the local
+// filesystem on every redeploy, so a saved file path 404s later. The
+// `upload` middleware already uses memoryStorage (no disk write) for this
+// exact reason; we just need to turn the buffer into a permanent data URI
+// here instead of a path.
 exports.uploadAttachment = async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
-    const url = `/uploads/screenshots/${req.file.filename}`;
-    res.status(201).json({ url });
+    const dataUri = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+    res.status(201).json({ url: dataUri });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
-// GET /api/chatbot/history/:sessionId — reload a widget conversation on page refresh
+// GET /api/chatbot/history/:sessionId — reload a widget conversation on page refresh / reopen
 exports.getHistory = async (req, res) => {
   try {
     const log = await ChatLog.findOne({ sessionId: req.params.sessionId });
@@ -107,11 +175,58 @@ exports.getHistory = async (req, res) => {
   }
 };
 
-// GET /api/admin/chatlogs — admin: review self-service conversations
+// GET /api/chatbot/admin/all — admin: review self-service conversations
 exports.getAllChatLogs = async (req, res) => {
   try {
     const logs = await ChatLog.find().populate('userId', 'name email').sort({ updatedAt: -1 }).limit(100);
     res.json({ logs });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// PUT /api/chatbot/admin/:sessionId/reply — admin sends a real reply,
+// taking over from the AI for this conversation. Delivered instantly
+// (no delay — this is a genuine human already at the keyboard).
+exports.adminReply = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { message } = req.body;
+    if (!message || !message.trim()) return res.status(400).json({ message: 'Message is required' });
+
+    const log = await ChatLog.findOne({ sessionId });
+    if (!log) return res.status(404).json({ message: 'Conversation not found' });
+
+    log.messages.forEach((m) => { if (m.role === 'user') m.seen = true; });
+    log.messages.push({ role: 'admin', content: message.trim(), seen: true, at: new Date() });
+    log.updatedAt = new Date();
+    await log.save();
+
+    const savedMsg = log.messages[log.messages.length - 1];
+    req.io?.to(`chat:${sessionId}`).emit('chatMessage', { sessionId, message: savedMsg });
+    req.io?.to('admin-chats').emit('chatUpdated', { sessionId });
+
+    res.json({ message: savedMsg });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// PUT /api/chatbot/admin/:sessionId/seen — admin opened this conversation
+// in the panel; mark every user message as read so their "Seen" tick shows.
+exports.markChatSeen = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const log = await ChatLog.findOne({ sessionId });
+    if (!log) return res.status(404).json({ message: 'Conversation not found' });
+
+    let changed = false;
+    log.messages.forEach((m) => { if (m.role === 'user' && !m.seen) { m.seen = true; changed = true; } });
+    if (changed) {
+      await log.save();
+      req.io?.to(`chat:${sessionId}`).emit('chatSeen', { sessionId });
+    }
+    res.json({ ok: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
