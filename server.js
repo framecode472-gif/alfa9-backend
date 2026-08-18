@@ -68,6 +68,12 @@ app.use((req, res, next) => {
 io.on('connection', (socket) => {
   console.log('🟢 Client connected:', socket.id);
 
+  // The user's own bet-settled events (win/loss + new balance) are
+  // delivered privately to this room — see gameEngine.settleRound.
+  socket.on('joinUser', (userId) => {
+    if (userId) socket.join(`user:${userId}`);
+  });
+
   // A chat widget joins its own conversation's room so it can receive the
   // delayed AI reply / an admin's manual reply / seen-status updates in
   // real time, without polling.
@@ -131,7 +137,7 @@ mongoose.connect(process.env.MONGO_URI)
   .then(() => {
     console.log('✅ MongoDB connected');
     const { startRoundScheduler } = require('./src/jobs/roundScheduler');
-    startRoundScheduler();
+    startRoundScheduler(io);
   })
   .catch(err => console.error('❌ MongoDB error:', err.message));
 

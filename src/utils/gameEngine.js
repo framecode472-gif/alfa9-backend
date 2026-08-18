@@ -217,7 +217,7 @@ function evaluateBetForGame(game, bet, result) {
  * hooks — VIP EXP, upline commission, partner-reward turnover check,
  * and betting-rebate accrual — for every user who bet in this round.
  */
-async function settleRound(round) {
+async function settleRound(round, io) {
   // Atomically claim this round for settlement. If the round scheduler's tick overlaps
   // with a previous tick that's still mid-settlement (e.g. a round with many bets takes
   // >1s to process), a second call could otherwise re-settle the same round and pay
@@ -281,6 +281,18 @@ async function settleRound(round) {
         await creditCommission(user, bet.amount);
         // Partner-reward turnover check (referrer's deposit-bonus unlock).
         await checkAndCreditPartnerRewards(user._id);
+
+        io?.to(`user:${user._id}`).emit('betSettled', {
+          betId: bet._id.toString(),
+          game: round.game,
+          duration: round.duration,
+          period: round.period,
+          status: win ? 'Succeed' : 'Failed',
+          winLose: win ? payout : -bet.amount,
+          amount: bet.amount,
+          result,
+          newBalance: user.balance
+        });
       } catch (betErr) {
         // One bad bet (e.g. a deleted user, a transient DB hiccup) must not
         // stop the whole round from settling — log it and keep going so
@@ -318,6 +330,8 @@ async function settleRound(round) {
       }
     }
     if (!committed) throw lastErr;
+
+    io?.emit('roundSettled', { game: round.game, duration: round.duration, period: round.period, result });
   } catch (err) {
     if (!result) {
       // Failed before a result was even decided — nothing was processed
@@ -340,12 +354,12 @@ async function settleRound(round) {
 
 /**
  * "My history" rule: if a user hasn't made an approved deposit in the last
- * 3 days, their bet history is hidden (not deleted — just not returned)
+ * 2 days, their bet history is hidden (not deleted — just not returned)
  * across all three games. Returns true if history should be shown.
  */
 async function hasRecentDeposit(userId) {
-  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
-  const exists = await Deposit.exists({ userId, status: 'approved', createdAt: { $gte: threeDaysAgo } });
+  const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+  const exists = await Deposit.exists({ userId, status: 'approved', createdAt: { $gte: twoDaysAgo } });
   return !!exists;
 }
 

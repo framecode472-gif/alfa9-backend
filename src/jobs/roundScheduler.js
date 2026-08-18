@@ -20,7 +20,7 @@ const { ALL_STREAMS, getCurrentRound } = require('../utils/gameEngine');
  *   const { startRoundScheduler } = require('./src/jobs/roundScheduler');
  *   startRoundScheduler();
  */
-function startRoundScheduler() {
+function startRoundScheduler(io) {
   let running = false;
 
   const tick = async () => {
@@ -38,7 +38,7 @@ function startRoundScheduler() {
             endTime: { $lte: now }
           });
           for (const round of dueRounds) {
-            await settleRound(round);
+            await settleRound(round, io);
           }
         } catch (err) {
           console.error(`Round scheduler error (${stream.game}/${stream.duration}):`, err.message);
