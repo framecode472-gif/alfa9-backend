@@ -77,10 +77,11 @@ exports.getMyBetsForRound = async (req, res) => {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = 10;
 
-    // No approved deposit in the last 2 days -> don't show betting history
-    // (across WinGo/K3/5D) for this user, even though the bets themselves
-    // still exist in the database (untouched, just not returned here).
-    const eligible = await engine.hasRecentDeposit(req.user.id);
+    // No bet placed on any game in the last 48 hours -> don't show betting
+    // history (across WinGo/K3/5D) for this user, even though the bets
+    // themselves still exist in the database (untouched, just not returned
+    // here). Placing a new bet makes history visible again immediately.
+    const eligible = await engine.hasRecentBetActivity(req.user.id);
     if (!eligible) {
       return res.json({ bets: [], page: 1, totalPages: 1, total: 0 });
     }

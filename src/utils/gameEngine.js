@@ -353,18 +353,22 @@ async function settleRound(round, io) {
 }
 
 /**
- * "My history" rule: if a user hasn't made an approved deposit in the last
- * 2 days, their bet history is hidden (not deleted — just not returned)
- * across all three games. Returns true if history should be shown.
+ * "My history" rule: if a user hasn't placed ANY bet on WinGo/K3/5D in the
+ * last 48 hours, their bet history is hidden (not deleted — the actual
+ * records stay in the database for admin/accounting purposes, just not
+ * returned to this endpoint) across all three games. The moment they place
+ * a new bet, history is visible again immediately (that new bet's own
+ * timestamp satisfies the 48-hour check on its own).
+ * Returns true if history should be shown.
  */
-async function hasRecentDeposit(userId) {
-  const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
-  const exists = await Deposit.exists({ userId, status: 'approved', createdAt: { $gte: twoDaysAgo } });
+async function hasRecentBetActivity(userId) {
+  const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
+  const exists = await Bet.exists({ userId, createdAt: { $gte: twoDaysAgo } });
   return !!exists;
 }
 
 module.exports = {
   ALL_STREAMS, TAX_RATE, computeRoundWindow, getCurrentRound,
   generateOrderNumber, placeBet, decideResult, settleRound,
-  evaluateBetForGame, hasRecentDeposit
+  evaluateBetForGame, hasRecentBetActivity
 };
