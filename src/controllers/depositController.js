@@ -214,9 +214,23 @@ exports.approveDeposit = async (req, res) => {
     // ================================================================================
 
     // ===== SPIN WHEEL — grant today's spins per cumulative deposit tier =====
-    const { grantSpinsForDeposit } = require('../utils/spinRewards');
+    const { grantSpinsForDeposit, grantReferralSpin } = require('../utils/spinRewards');
     grantSpinsForDeposit(user, deposit.amount);
     await user.save({ session });
+    // ==========================================================================
+
+    // ===== REFERRAL SPIN WHEEL — the REFERRER gets +1 spin every time
+    // someone they referred gets an approved deposit (any deposit, not
+    // just the first). See spinRewards.pickReferralPrize for the prize table. =====
+    const Referral = require('../models/Referral');
+    const referralRecord = await Referral.findOne({ invitedUserId: user._id }).session(session);
+    if (referralRecord) {
+      const referrer = await User.findById(referralRecord.referrerId).session(session);
+      if (referrer) {
+        grantReferralSpin(referrer);
+        await referrer.save({ session });
+      }
+    }
     // ==========================================================================
 
     const transaction = new Transaction({

@@ -95,6 +95,22 @@ const UserSchema = new mongoose.Schema({
     type: Number, 
     default: 0 
   },
+  // ===== REFERRAL SPIN WHEEL =====
+  // Separate from the deposit-based wheel (user.spin below) — every time
+  // someone this user referred gets an APPROVED deposit, this user earns
+  // +1 spin here (see grantReferralSpin in utils/spinRewards.js, hooked
+  // into depositController.approveDeposit / adminController.approveDepositAdmin).
+  referralSpinsAvailable: {
+    type: Number,
+    default: 0
+  },
+  // Lifetime count of times this user has won the top Rs1000 referral-spin
+  // prize — capped at 2 ever, and only reachable at all once referralCount
+  // reaches 20+. See pickReferralPrize in utils/spinRewards.js.
+  referral1000Wins: {
+    type: Number,
+    default: 0
+  },
   uplineChain: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // [L1 direct upline, L2, ... up to L6] — powers Promotion/SubordinateData tier filters
   // ===== ACTIVITY (Attendance streak — Activity/subpages/AttendanceBonus.jsx) =====
   activity: {

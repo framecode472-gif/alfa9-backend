@@ -101,4 +101,62 @@ function pickPrize(user) {
   return affordable[affordable.length - 1];
 }
 
-module.exports = { SPIN_TIERS, SEGMENTS, SPIN_DAILY_WIN_CAP, resetIfNewDay, grantSpinsForDeposit, pickPrize, todayStr };
+// ===== REFERRAL SPIN WHEEL =====
+// Separate reward path from the deposit-based wheel above. Earned by
+// referring people who go on to make approved deposits (see
+// grantReferralSpin, hooked into depositController.approveDeposit and
+// adminController.approveDepositAdmin).
+//
+// Mostly small prizes on purpose — weight is heavily skewed toward
+// Rs20/Rs50/Rs100 so most spins feel modest, matching "har baar achay
+// paise na niklen, kisi mein 50 kisi mein 20 kisi mein 100". Rs1000 is the
+// rare top prize, and is only even offered to users with 20+ referrals —
+// and even for them, capped at 2 wins ever (referral1000Wins on User).
+const REFERRAL_SEGMENTS = [
+  { label: 'Rs20', amount: 20, weight: 500 },
+  { label: 'Rs50', amount: 50, weight: 300 },
+  { label: 'Rs100', amount: 100, weight: 130 },
+  { label: 'Rs200', amount: 200, weight: 50 },
+  { label: 'Rs500', amount: 500, weight: 15 },
+  { label: 'Rs1000', amount: 1000, weight: 5 }, // only offered if eligible — see pickReferralPrize
+];
+const REFERRAL_1000_REQUIRED_COUNT = 20; // referralCount needed before Rs1000 can ever appear
+const REFERRAL_1000_LIFETIME_CAP = 2; // max times any single user can ever win Rs1000 from this wheel
+
+/**
+ * Call after a referred user's deposit is approved
+ * (depositController.approveDeposit / adminController.approveDepositAdmin).
+ * Credits the REFERRER (not the depositor) with +1 referral spin. Mutates,
+ * doesn't save — caller saves.
+ */
+function grantReferralSpin(referrer) {
+  referrer.referralSpinsAvailable = (referrer.referralSpinsAvailable || 0) + 1;
+  return referrer;
+}
+
+/**
+ * Picks a prize for one referral-wheel spin. Rs1000 is excluded from the
+ * pool entirely unless this user has 20+ referrals AND hasn't already hit
+ * the lifetime cap of 2 Rs1000 wins — everyone else only ever sees
+ * Rs20-Rs500, weighted toward the smaller end.
+ */
+function pickReferralPrize(user) {
+  const eligibleFor1000 =
+    (user.referralCount || 0) >= REFERRAL_1000_REQUIRED_COUNT &&
+    (user.referral1000Wins || 0) < REFERRAL_1000_LIFETIME_CAP;
+
+  const pool = eligibleFor1000 ? REFERRAL_SEGMENTS : REFERRAL_SEGMENTS.filter((s) => s.amount < 1000);
+
+  const totalWeight = pool.reduce((s, seg) => s + seg.weight, 0);
+  let roll = Math.random() * totalWeight;
+  for (const seg of pool) {
+    if (roll < seg.weight) return seg;
+    roll -= seg.weight;
+  }
+  return pool[pool.length - 1];
+}
+
+module.exports = {
+  SPIN_TIERS, SEGMENTS, SPIN_DAILY_WIN_CAP, resetIfNewDay, grantSpinsForDeposit, pickPrize, todayStr,
+  REFERRAL_SEGMENTS, REFERRAL_1000_REQUIRED_COUNT, REFERRAL_1000_LIFETIME_CAP, grantReferralSpin, pickReferralPrize
+};
