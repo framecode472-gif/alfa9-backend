@@ -9,6 +9,7 @@ const GameSetting = require('../models/GameSetting');
 const Gift = require('../models/Gift');
 const Bonus = require('../models/Bonus');
 const Referral = require('../models/Referral');
+const PromotionBoost = require('../models/PromotionBoost');
 const { calculateDepositBonus } = require('../utils/depositBonus');
 const { notifyUser } = require('./notificationController');
 
@@ -996,5 +997,99 @@ exports.lookupUserById = async (req, res) => {
     res.json({ user: { id: user._id, uid: user.uid, name: user.name, email: user.email, phone: user.phone, balance: user.balance, vipExp: user.vip?.exp || 0, vipLevel: user.vip?.level || 0 } });
   } catch (error) {
     res.status(404).json({ message: 'User not found — check the ID' });
+  }
+};
+
+// ========== PROMOTION BOOST (manual referral-stat override, per user) ==========
+// Lets admin paste a user's UID and manually pad what THAT user sees on
+// their own Promotion page: direct/team register count, deposit number,
+// deposit amount, and "made first deposit" count. Stored separately from
+// real data (PromotionBoost model) and simply ADDED on top of the real,
+// live-computed numbers — see promotionController.getPromotionSummary.
+
+// Small helper — same numeric-UID-first lookup used everywhere else in
+// this file (give-points, lookup, etc.) so admin always types the same
+// kind of ID shown on the member's Account page.
+async function findUserByAnyId(id) {
+  let user = await User.findOne({ uid: String(id).trim() });
+  if (!user && mongoose.Types.ObjectId.isValid(id)) {
+    user = await User.findById(id);
+  }
+  return user;
+}
+
+// GET /api/admin/promotion-boost/:id
+// Returns the user's basic info, their REAL (live) direct/team stats for
+// reference, and whatever boost is currently set (all zeros if none yet).
+exports.getPromotionBoostForUser = async (req, res) => {
+  try {
+    const user = await findUserByAnyId(req.params.id);
+    if (!user) return res.status(404).json({ message: 'User not found — check the ID' });
+
+    const Deposit = require('../models/Deposit');
+
+    const directIds = (await User.find({ referredBy: user._id }).select('_id')).map((u) => u._id);
+    const teamIds = (await User.find({ uplineChain: user._id }).select('_id')).map((u) => u._id);
+
+    const realDepositStats = async (ids) => {
+      const rows = await Deposit.aggregate([
+        { $match: { userId: { $in: ids }, status: 'approved' } },
+        { $group: { _id: '$userId', total: { $sum: '$amount' } } }
+      ]);
+      return { depositNumber: rows.length, depositAmount: rows.reduce((s, r) => s + r.total, 0) };
+    };
+    const [directDep, teamDep] = await Promise.all([realDepositStats(directIds), realDepositStats(teamIds)]);
+
+    const boost = await PromotionBoost.findOne({ userId: user._id });
+
+    res.json({
+      user: { id: user._id, uid: user.uid, name: user.name, email: user.email, phone: user.phone },
+      real: {
+        direct: { register: directIds.length, depositNumber: directDep.depositNumber, depositAmount: directDep.depositAmount },
+        team: { register: teamIds.length, depositNumber: teamDep.depositNumber, depositAmount: teamDep.depositAmount }
+      },
+      boost: boost || {
+        direct: { register: 0, depositNumber: 0, depositAmount: 0, firstDeposit: 0 },
+        team: { register: 0, depositNumber: 0, depositAmount: 0, firstDeposit: 0 },
+        note: ''
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// PUT /api/admin/promotion-boost/:id
+// body: { direct: { register, depositNumber, depositAmount, firstDeposit }, team: {...}, note }
+// Any field left out defaults to 0 (this SETS the boost, it doesn't add to
+// the previous boost — admin sees current values first via GET above).
+exports.setPromotionBoostForUser = async (req, res) => {
+  try {
+    const user = await findUserByAnyId(req.params.id);
+    if (!user) return res.status(404).json({ message: 'User not found — check the ID' });
+
+    const clean = (obj = {}) => ({
+      register: Math.max(0, Number(obj.register) || 0),
+      depositNumber: Math.max(0, Number(obj.depositNumber) || 0),
+      depositAmount: Math.max(0, Number(obj.depositAmount) || 0),
+      firstDeposit: Math.max(0, Number(obj.firstDeposit) || 0)
+    });
+
+    const direct = clean(req.body.direct);
+    const team = clean(req.body.team);
+    const note = typeof req.body.note === 'string' ? req.body.note.slice(0, 300) : '';
+
+    const boost = await PromotionBoost.findOneAndUpdate(
+      { userId: user._id },
+      { userId: user._id, direct, team, note },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    res.json({
+      message: `Referral boost updated for ${user.name} (UID: ${user.uid})`,
+      boost
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 };

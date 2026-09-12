@@ -52,4 +52,9 @@ router.put('/bonuses/:key', auth, admin, adminController.updateBonus);
 router.get('/users/lookup/:id', auth, admin, adminController.lookupUserById);
 router.post('/users/give-points', auth, admin, adminController.givePointsToUser);
 
+// Promotion Boost — manually set a user's referral stats (register/deposit
+// counts, deposit amount, first-deposit count) shown on their Promotion page
+router.get('/promotion-boost/:id', auth, admin, adminController.getPromotionBoostForUser);
+router.put('/promotion-boost/:id', auth, admin, adminController.setPromotionBoostForUser);
+
 module.exports = router;

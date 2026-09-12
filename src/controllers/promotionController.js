@@ -4,6 +4,7 @@ const Deposit = require('../models/Deposit');
 const Bet = require('../models/Bet');
 const CommissionRecord = require('../models/CommissionRecord');
 const PartnerReward = require('../models/PartnerReward');
+const PromotionBoost = require('../models/PromotionBoost');
 
 function startOfDay(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
 
@@ -94,20 +95,29 @@ exports.getPromotionSummary = async (req, res) => {
       commissionSum(yesterdayStart, today), commissionSum(weekStart), commissionSum(null)
     ]);
 
+    // ===== ADMIN BOOST — manually added on top of the real numbers above.
+    // See PromotionBoost model + adminController.setPromotionBoostForUser.
+    // Missing/no boost record = all zeros, so nothing changes for anyone
+    // the admin hasn't touched. =====
+    const boost = await PromotionBoost.findOne({ userId: me });
+    const b = boost || { direct: {}, team: {} };
+    const dB = { register: 0, depositNumber: 0, depositAmount: 0, firstDeposit: 0, ...b.direct };
+    const tB = { register: 0, depositNumber: 0, depositAmount: 0, firstDeposit: 0, ...b.team };
+
     res.json({
       inviteCode: user.referralCode,
       agencyEarnings: { yesterdayCommission },
       stats: {
-        register: { direct: directReg, team: teamReg },
-        depositNumber: { direct: directDep.depositors, team: teamDep.depositors },
-        depositAmount: { direct: directDep.amount, team: teamDep.amount },
-        firstDeposit: { direct: directFirstDep, team: teamFirstDep }
+        register: { direct: directReg + dB.register, team: teamReg + tB.register },
+        depositNumber: { direct: directDep.depositors + dB.depositNumber, team: teamDep.depositors + tB.depositNumber },
+        depositAmount: { direct: directDep.amount + dB.depositAmount, team: teamDep.amount + tB.depositAmount },
+        firstDeposit: { direct: directFirstDep + dB.firstDeposit, team: teamFirstDep + tB.firstDeposit }
       },
       promoData: {
         thisWeekCommission: weekCommission,
         totalCommission,
-        directSubordinateCount: directIds.length,
-        teamSubordinateCount: teamIds.length
+        directSubordinateCount: directIds.length + dB.register,
+        teamSubordinateCount: teamIds.length + tB.register
       }
     });
   } catch (error) {
